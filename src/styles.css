@@ -1,6 +1,6 @@
 :root {
   color-scheme: dark;
-  font-family: "Cascadia Code", "IBM Plex Mono", "Fira Code", Consolas, "Courier New", monospace;
+  font-family: "VT323", "Cascadia Code", "IBM Plex Mono", "Fira Code", Consolas, "Courier New", monospace;
   background: #000;
   color: var(--ink);
   --bg: #000;

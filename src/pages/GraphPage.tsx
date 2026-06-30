@@ -115,6 +115,7 @@ export default function GraphPage() {
   const [hoverNodeId, setHoverNodeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [fontLoadVersion, setFontLoadVersion] = useState(0);
   const graphTheme = useMemo(() => {
     const accent = settings.accentColor;
     const warm = accent === defaultSettings.accentColor ? "#c8ff64" : mixHex(accent, 0.48);
@@ -148,6 +149,19 @@ export default function GraphPage() {
 
   useEffect(() => {
     loadGraph();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    document.fonts
+      ?.load("16px VT323")
+      .then(() => {
+        if (!cancelled) setFontLoadVersion((version) => version + 1);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -460,7 +474,7 @@ export default function GraphPage() {
       }
 
       const label = new SpriteText(self ? "SELF // ME" : node.label, self ? 7.2 : 4.8, highlighted ? graphTheme.accentStrong : graphTheme.accentMuted);
-      label.fontFace = "Cascadia Code, Consolas, monospace";
+      label.fontFace = "VT323, Cascadia Code, Consolas, monospace";
       label.fontWeight = self ? "900" : "800";
       label.backgroundColor = false;
       label.padding = [2, 4];
@@ -472,7 +486,7 @@ export default function GraphPage() {
 
       return group;
     },
-    [connectedIds, graphTheme, hoverNodeId]
+    [connectedIds, fontLoadVersion, graphTheme, hoverNodeId]
   );
 
   const linkMaterial = useCallback(
