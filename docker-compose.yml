@@ -1,0 +1,18 @@
+services:
+  rolodexian:
+    build: .
+    container_name: rolodexian
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATA_DIR: /app/data
+      UPLOAD_DIR: /app/data/uploads
+      DATABASE_PATH: /app/data/rolodexian.sqlite
+    volumes:
+      - rolodexian-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  rolodexian-data:
