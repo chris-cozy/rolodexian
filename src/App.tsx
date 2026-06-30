@@ -47,10 +47,7 @@ export default function App() {
       ) : null}
       <header className="top-nav">
         <NavLink to="/" className="brand" aria-label="Dexian OS contacts">
-          <span className="brand-mark">
-            <span>Dexian OS</span>
-            <small>{appVersion}</small>
-          </span>
+          <span className="brand-title">DEXIAN OS</span>
         </NavLink>
         <nav className="nav-list" aria-label="Primary">
           <NavLink to="/" end>
@@ -74,6 +71,7 @@ export default function App() {
           <span>LOCALHOST</span>
           <span>DATASTORE: SQLITE</span>
           <span>NETWORK MAP: ONLINE</span>
+          <span>VERSION: {appVersion}</span>
         </div>
       </header>
       <main className="workspace">

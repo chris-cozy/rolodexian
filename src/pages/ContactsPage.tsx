@@ -49,30 +49,29 @@ export default function ContactsPage() {
           <p className="eyebrow">Contacts</p>
           <h1>People</h1>
         </div>
-        <Link className="primary-button" to="/contacts/new">
-          <Plus size={17} />
-          Contact
-        </Link>
+        <div className="page-header-actions">
+          <label className="search-box">
+            <Search size={18} />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search contacts" />
+          </label>
+          <label className="filter-box">
+            <SlidersHorizontal size={17} />
+            <select value={relationshipType} onChange={(event) => setRelationshipType(event.target.value)}>
+              <option value="">All relationships</option>
+              {relationshipOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                  {relationshipCounts[option] ? ` (${relationshipCounts[option]})` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Link className="primary-button" to="/contacts/new">
+            <Plus size={17} />
+            Contact
+          </Link>
+        </div>
       </header>
-
-      <div className="toolbar">
-        <label className="search-box">
-          <Search size={18} />
-          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search contacts" />
-        </label>
-        <label className="filter-box">
-          <SlidersHorizontal size={17} />
-          <select value={relationshipType} onChange={(event) => setRelationshipType(event.target.value)}>
-            <option value="">All relationships</option>
-            {relationshipOptions.map((option) => (
-              <option key={option} value={option}>
-                {option}
-                {relationshipCounts[option] ? ` (${relationshipCounts[option]})` : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
 
       <div className="data-strip">
         <span>Visible Records: {contacts.length}</span>
@@ -85,10 +84,6 @@ export default function ContactsPage() {
       {!loading && !contacts.length ? (
         <div className="empty-state">
           <h2>No contacts found</h2>
-          <Link className="secondary-button" to="/contacts/new">
-            <Plus size={16} />
-            Add first contact
-          </Link>
         </div>
       ) : null}
       <div className="contact-grid">
