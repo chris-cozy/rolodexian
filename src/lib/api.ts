@@ -1,4 +1,4 @@
-import type { Contact, GraphResponse, Relationship } from "../types";
+import type { Contact, GraphResponse, ImportSummary, Relationship } from "../types";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
@@ -20,6 +20,26 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw new Error(payload.error || "Request failed.");
   }
   return payload as T;
+}
+
+function filenameFromDisposition(disposition: string | null): string {
+  if (!disposition) return "rolodexian-contacts.json";
+  const encodedMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (encodedMatch?.[1]) return decodeURIComponent(encodedMatch[1].replace(/"/g, ""));
+  const match = disposition.match(/filename="?([^"]+)"?/i);
+  return match?.[1] || "rolodexian-contacts.json";
+}
+
+async function requestBlob(path: string) {
+  const response = await fetch(path);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || "Request failed.");
+  }
+  return {
+    blob: await response.blob(),
+    filename: filenameFromDisposition(response.headers.get("Content-Disposition"))
+  };
 }
 
 export const api = {
@@ -96,5 +116,19 @@ export const api = {
 
   async getGraph() {
     return request<GraphResponse>("/api/graph");
+  },
+
+  async exportContactsArchive() {
+    return requestBlob("/api/contacts/export");
+  },
+
+  async importContactsArchive(file: File) {
+    const formData = new FormData();
+    formData.append("archive", file);
+    const payload = await request<{ summary: ImportSummary }>("/api/contacts/import", {
+      method: "POST",
+      body: formData
+    });
+    return payload.summary;
   }
 };

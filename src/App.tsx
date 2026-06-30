@@ -1,8 +1,10 @@
 import type { CSSProperties } from "react";
-import { Network, Search, UsersRound } from "lucide-react";
+import { ArchiveRestore, Network, Settings, UsersRound } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
+import { useSettings } from "./lib/settings";
 
 const rainGlyphs = "010110100111ROLODEXIANNETWORKLOCALDATASTREAM";
+const appVersion = "v0.1.0";
 
 type RainStyle = CSSProperties & {
   "--rain-x": string;
@@ -11,31 +13,44 @@ type RainStyle = CSSProperties & {
   "--rain-opacity": string;
 };
 
-const rainColumns = Array.from({ length: 42 }, (_, index) => ({
+const rainColumns = Array.from({ length: 96 }, (_, index) => ({
   id: index,
-  text: Array.from({ length: 72 }, (_, glyphIndex) => rainGlyphs[(glyphIndex + index * 3) % rainGlyphs.length]).join("\n"),
+  text: Array.from({ length: 108 }, (_, glyphIndex) => rainGlyphs[(glyphIndex + index * 5) % rainGlyphs.length]).join("\n"),
   style: {
-    "--rain-x": `${(index / 41) * 100}%`,
-    "--rain-delay": `${-((index * 0.43) % 8.2)}s`,
-    "--rain-duration": `${8.5 + (index % 9) * 0.8}s`,
-    "--rain-opacity": `${0.18 + (index % 6) * 0.055}`
+    "--rain-x": `${(index / 95) * 100}%`,
+    "--rain-delay": `${-((index * 0.31) % 9.4)}s`,
+    "--rain-duration": `${6.8 + (index % 11) * 0.52}s`,
+    "--rain-opacity": `${0.24 + (index % 7) * 0.055}`
   } as RainStyle
 }));
 
 export default function App() {
+  const { settings } = useSettings();
+  const shellClasses = [
+    "app-shell",
+    `matrix-rain-${settings.matrixRain}`,
+    settings.reducedMotion ? "reduced-motion" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className="app-shell">
-      <div className="matrix-rain" aria-hidden="true">
-        {rainColumns.map((column) => (
-          <span className="matrix-rain-column" key={column.id} style={column.style}>
-            {column.text}
-          </span>
-        ))}
-      </div>
+    <div className={shellClasses}>
+      {settings.matrixRain !== "off" ? (
+        <div className="matrix-rain" aria-hidden="true">
+          {rainColumns.map((column) => (
+            <span className="matrix-rain-column" key={column.id} style={column.style}>
+              {column.text}
+            </span>
+          ))}
+        </div>
+      ) : null}
       <header className="top-nav">
-        <NavLink to="/" className="brand" aria-label="Rolodexian contacts">
-          <span className="brand-mark">R</span>
-          <span>Rolodexian</span>
+        <NavLink to="/" className="brand" aria-label="Dexian OS contacts">
+          <span className="brand-mark">
+            <span>Dexian OS</span>
+            <small>{appVersion}</small>
+          </span>
         </NavLink>
         <nav className="nav-list" aria-label="Primary">
           <NavLink to="/" end>
@@ -46,15 +61,19 @@ export default function App() {
             <Network size={18} />
             Graph
           </NavLink>
+          <NavLink to="/contacts/import-export">
+            <ArchiveRestore size={18} />
+            Import/Export
+          </NavLink>
+          <NavLink to="/settings">
+            <Settings size={18} />
+            Settings
+          </NavLink>
         </nav>
         <div className="system-readout" aria-label="System status">
           <span>LOCALHOST</span>
           <span>DATASTORE: SQLITE</span>
           <span>NETWORK MAP: ONLINE</span>
-        </div>
-        <div className="top-nav-meta">
-          <Search size={16} />
-          Local private network
         </div>
       </header>
       <main className="workspace">

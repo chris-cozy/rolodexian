@@ -16,6 +16,8 @@ const dbPath = process.env.DATABASE_PATH || path.join(dataDir, "rolodexian.sqlit
 const port = Number(process.env.PORT || 4000);
 const isProduction = process.env.NODE_ENV === "production";
 const distDir = path.join(rootDir, "dist");
+const archiveFormat = "rolodexian.contacts-export";
+const archiveVersion = 1;
 
 fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -114,6 +116,15 @@ const upload = multer({
   }
 });
 
+const archiveUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const isJson = file.mimetype === "application/json" || file.originalname?.toLowerCase().endsWith(".json");
+    cb(null, Boolean(isJson));
+  }
+});
+
 const app = express();
 
 if (!isProduction) {
@@ -150,6 +161,12 @@ function parseJson(value, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function badRequest(message) {
+  const error = new Error(message);
+  error.status = 400;
+  return error;
 }
 
 function stringList(value) {
@@ -195,6 +212,183 @@ function mapImage(row) {
     createdAt: row.created_at,
     url: imageUrl(row)
   };
+}
+
+function archiveFileDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function plainObject(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function requiredText(value, fieldName) {
+  const text = optionalText(value);
+  if (!text) throw badRequest(`${fieldName} is required.`);
+  return text;
+}
+
+function safeImageExtension(image) {
+  const fromName = [image.originalName, image.filename]
+    .map((name) => path.extname(String(name || "")).toLowerCase())
+    .find((extension) => extension && /^[a-z0-9.]{2,12}$/.test(extension));
+  if (fromName) return fromName;
+  if (image.mimeType === "image/jpeg") return ".jpg";
+  if (image.mimeType === "image/png") return ".png";
+  if (image.mimeType === "image/gif") return ".gif";
+  if (image.mimeType === "image/webp") return ".webp";
+  if (image.mimeType === "image/svg+xml") return ".svg";
+  return ".bin";
+}
+
+async function archiveImage(image) {
+  const file = await fsp.readFile(path.join(uploadDir, image.filename));
+  const { url: _url, ...metadata } = image;
+  return {
+    ...metadata,
+    encoding: "base64",
+    data: file.toString("base64")
+  };
+}
+
+async function archiveContact(contact) {
+  const { profileImage: _profileImage, images, ...metadata } = contact;
+  return {
+    ...metadata,
+    images: await Promise.all(images.map(archiveImage))
+  };
+}
+
+function decodeArchiveImageData(value, fieldName) {
+  const raw = requiredText(value, fieldName);
+  const dataUrlMatch = raw.match(/^data:([^;]+);base64,(.*)$/s);
+  const mimeType = dataUrlMatch ? dataUrlMatch[1] : null;
+  const base64 = (dataUrlMatch ? dataUrlMatch[2] : raw).replace(/\s/g, "");
+  if (!base64 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
+    throw badRequest(`${fieldName} must be base64 encoded image data.`);
+  }
+  const buffer = Buffer.from(base64, "base64");
+  if (!buffer.length) throw badRequest(`${fieldName} is empty.`);
+  return { buffer, mimeType };
+}
+
+function normalizeArchiveImage(rawImage, contactId, fieldName) {
+  if (!plainObject(rawImage)) throw badRequest(`${fieldName} must be an object.`);
+  const decoded = decodeArchiveImageData(rawImage.data, `${fieldName}.data`);
+  const mimeType = optionalText(rawImage.mimeType) || decoded.mimeType || "application/octet-stream";
+  if (!mimeType.startsWith("image/")) throw badRequest(`${fieldName}.mimeType must be an image MIME type.`);
+  const image = {
+    id: requiredText(rawImage.id, `${fieldName}.id`),
+    contactId,
+    originalName: optionalText(rawImage.originalName),
+    mimeType,
+    size: Number.isFinite(Number(rawImage.size)) ? Math.max(0, Math.round(Number(rawImage.size))) : decoded.buffer.length,
+    kind: rawImage.kind === "profile" ? "profile" : "additional",
+    notes: optionalText(rawImage.notes),
+    createdAt: optionalText(rawImage.createdAt),
+    buffer: decoded.buffer
+  };
+  return {
+    ...image,
+    filename: `${Date.now()}-${randomUUID()}${safeImageExtension(image)}`
+  };
+}
+
+function normalizeArchiveContact(rawContact, index) {
+  const fieldName = `contacts[${index}]`;
+  if (!plainObject(rawContact)) throw badRequest(`${fieldName} must be an object.`);
+  const id = requiredText(rawContact.id, `${fieldName}.id`);
+  const input = normalizeContactInput(rawContact);
+  if (!input.name) throw badRequest(`${fieldName}.name is required.`);
+  const images = Array.isArray(rawContact.images)
+    ? rawContact.images.map((image, imageIndex) => normalizeArchiveImage(image, id, `${fieldName}.images[${imageIndex}]`))
+    : [];
+  const imageIds = new Set(images.map((image) => image.id));
+  const profileImageId = optionalText(rawContact.profileImageId);
+  if (profileImageId && !imageIds.has(profileImageId)) {
+    throw badRequest(`${fieldName}.profileImageId must reference an image in the same contact.`);
+  }
+  return {
+    ...input,
+    id,
+    profileImageId,
+    images,
+    createdAt: optionalText(rawContact.createdAt),
+    updatedAt: optionalText(rawContact.updatedAt)
+  };
+}
+
+function relationshipPairKey(sourceContactId, targetContactId) {
+  return [sourceContactId, targetContactId].sort().join("::");
+}
+
+function normalizeArchiveRelationship(rawRelationship, index, availableContactIds) {
+  const fieldName = `relationships[${index}]`;
+  if (!plainObject(rawRelationship)) throw badRequest(`${fieldName} must be an object.`);
+  const input = normalizeRelationshipInput(rawRelationship);
+  const relationship = {
+    ...input,
+    id: requiredText(rawRelationship.id, `${fieldName}.id`),
+    createdAt: optionalText(rawRelationship.createdAt),
+    updatedAt: optionalText(rawRelationship.updatedAt)
+  };
+  if (!relationship.sourceContactId || !relationship.targetContactId) {
+    throw badRequest(`${fieldName} requires both sourceContactId and targetContactId.`);
+  }
+  if (relationship.sourceContactId === relationship.targetContactId) {
+    throw badRequest(`${fieldName} cannot connect a contact to itself.`);
+  }
+  if (!availableContactIds.has(relationship.sourceContactId) || !availableContactIds.has(relationship.targetContactId)) {
+    throw badRequest(`${fieldName} references a contact that does not exist.`);
+  }
+  return relationship;
+}
+
+function parseArchive(buffer) {
+  let archive;
+  try {
+    archive = JSON.parse(buffer.toString("utf8"));
+  } catch {
+    throw badRequest("Import file must be valid JSON.");
+  }
+
+  if (!plainObject(archive)) throw badRequest("Import file must contain an archive object.");
+  if (archive.format !== archiveFormat || archive.version !== archiveVersion) {
+    throw badRequest("Import file is not a supported Rolodexian contacts archive.");
+  }
+  if (!Array.isArray(archive.contacts)) throw badRequest("Archive contacts must be an array.");
+  if (!Array.isArray(archive.relationships)) throw badRequest("Archive relationships must be an array.");
+
+  const contacts = archive.contacts.map(normalizeArchiveContact);
+  const contactIds = new Set();
+  const imageIds = new Set();
+  for (const contact of contacts) {
+    if (contactIds.has(contact.id)) throw badRequest(`Duplicate contact id in archive: ${contact.id}.`);
+    contactIds.add(contact.id);
+    for (const image of contact.images) {
+      if (imageIds.has(image.id)) throw badRequest(`Duplicate image id in archive: ${image.id}.`);
+      imageIds.add(image.id);
+    }
+  }
+
+  const existingContactIds = new Set(db.prepare("SELECT id FROM contacts").all().map((row) => row.id));
+  const availableContactIds = new Set([...existingContactIds, ...contactIds]);
+  const relationships = archive.relationships.map((relationship, index) =>
+    normalizeArchiveRelationship(relationship, index, availableContactIds)
+  );
+  const relationshipIds = new Set();
+  const relationshipPairs = new Set();
+  for (const relationship of relationships) {
+    if (relationshipIds.has(relationship.id)) throw badRequest(`Duplicate relationship id in archive: ${relationship.id}.`);
+    relationshipIds.add(relationship.id);
+    const pairKey = relationshipPairKey(relationship.sourceContactId, relationship.targetContactId);
+    if (relationshipPairs.has(pairKey)) {
+      throw badRequest(`Duplicate relationship pair in archive: ${relationship.sourceContactId} and ${relationship.targetContactId}.`);
+    }
+    relationshipPairs.add(pairKey);
+  }
+
+  return { contacts, relationships };
 }
 
 function mapContact(row) {
@@ -375,6 +569,190 @@ const updateContactTx = db.transaction((id, input) => {
   replaceChildRows(id, input);
 });
 
+const insertImportedContact = db.prepare(`
+  INSERT INTO contacts (
+    id, name, nicknames, birthdate, relationship_type, custom_relationship_type,
+    relationship_strength, last_interaction_date, self_relationship_notes, important_dates,
+    appearance, traits, preferences, summary, custom_fields, profile_image_id, created_at, updated_at
+  )
+  VALUES (
+    @id, @name, @nicknames, @birthdate, @relationshipType, @customRelationshipType,
+    @relationshipStrength, @lastInteractionDate, @selfRelationshipNotes, @importantDates,
+    @appearance, @traits, @preferences, @summary, @customFields, @profileImageId, @createdAt, @updatedAt
+  )
+`);
+
+const updateImportedContact = db.prepare(`
+  UPDATE contacts SET
+    name = @name,
+    nicknames = @nicknames,
+    birthdate = @birthdate,
+    relationship_type = @relationshipType,
+    custom_relationship_type = @customRelationshipType,
+    relationship_strength = @relationshipStrength,
+    last_interaction_date = @lastInteractionDate,
+    self_relationship_notes = @selfRelationshipNotes,
+    important_dates = @importantDates,
+    appearance = @appearance,
+    traits = @traits,
+    preferences = @preferences,
+    summary = @summary,
+    custom_fields = @customFields,
+    profile_image_id = @profileImageId,
+    created_at = @createdAt,
+    updated_at = @updatedAt
+  WHERE id = @id
+`);
+
+const insertImportedImage = db.prepare(`
+  INSERT INTO images (id, contact_id, filename, original_name, mime_type, size, kind, notes, created_at)
+  VALUES (@id, @contactId, @filename, @originalName, @mimeType, @size, @kind, @notes, @createdAt)
+`);
+
+const relationshipRawById = db.prepare("SELECT * FROM relationships WHERE id = ?");
+const relationshipRawByPair = db.prepare(`
+  SELECT * FROM relationships
+  WHERE (source_contact_id = ? AND target_contact_id = ?)
+     OR (source_contact_id = ? AND target_contact_id = ?)
+  LIMIT 1
+`);
+
+const insertImportedRelationship = db.prepare(`
+  INSERT INTO relationships (
+    id, source_contact_id, target_contact_id, relationship_type, custom_relationship_type,
+    relationship_strength, notes, start_date, last_interaction_date, created_at, updated_at
+  )
+  VALUES (
+    @id, @sourceContactId, @targetContactId, @relationshipType, @customRelationshipType,
+    @relationshipStrength, @notes, @startDate, @lastInteractionDate, @createdAt, @updatedAt
+  )
+`);
+
+const updateImportedRelationship = db.prepare(`
+  UPDATE relationships SET
+    source_contact_id = @sourceContactId,
+    target_contact_id = @targetContactId,
+    relationship_type = @relationshipType,
+    custom_relationship_type = @customRelationshipType,
+    relationship_strength = @relationshipStrength,
+    notes = @notes,
+    start_date = @startDate,
+    last_interaction_date = @lastInteractionDate,
+    created_at = @createdAt,
+    updated_at = @updatedAt
+  WHERE id = @id
+`);
+
+function importedContactParams(contact, timestamp) {
+  return {
+    id: contact.id,
+    name: contact.name,
+    nicknames: jsonString(contact.nicknames, []),
+    birthdate: contact.birthdate,
+    relationshipType: contact.relationshipType,
+    customRelationshipType: contact.customRelationshipType,
+    relationshipStrength: contact.relationshipStrength,
+    lastInteractionDate: contact.lastInteractionDate,
+    selfRelationshipNotes: contact.selfRelationshipNotes,
+    importantDates: jsonString(contact.importantDates, []),
+    appearance: jsonString(contact.appearance, {}),
+    traits: jsonString(contact.traits, []),
+    preferences: jsonString(contact.preferences, {}),
+    summary: contact.summary,
+    customFields: jsonString(contact.customFields, {}),
+    profileImageId: contact.profileImageId,
+    createdAt: contact.createdAt || timestamp,
+    updatedAt: contact.updatedAt || timestamp
+  };
+}
+
+function importArchiveTx(archive) {
+  return db.transaction((archivePayload) => {
+    const timestamp = nowIso();
+    const filesToDelete = new Set();
+    const summary = {
+      contacts: { created: 0, updated: 0 },
+      relationships: { created: 0, updated: 0 },
+      images: { created: 0, updated: 0, skipped: 0 },
+      warnings: []
+    };
+
+    for (const contact of archivePayload.contacts) {
+      const params = importedContactParams(contact, timestamp);
+      if (contactSelect.get(contact.id)) {
+        updateImportedContact.run(params);
+        summary.contacts.updated += 1;
+      } else {
+        insertImportedContact.run(params);
+        summary.contacts.created += 1;
+      }
+
+      replaceChildRows(contact.id, contact);
+
+      const existingImages = db.prepare("SELECT id, filename FROM images WHERE contact_id = ?").all(contact.id);
+      for (const image of existingImages) filesToDelete.add(image.filename);
+      const existingImageById = new Map(
+        contact.images.map((image) => [image.id, db.prepare("SELECT id, filename FROM images WHERE id = ?").get(image.id)])
+      );
+
+      db.prepare("DELETE FROM images WHERE contact_id = ?").run(contact.id);
+      for (const image of contact.images) {
+        const previous = existingImageById.get(image.id);
+        if (previous?.filename) filesToDelete.add(previous.filename);
+        db.prepare("DELETE FROM images WHERE id = ?").run(image.id);
+        insertImportedImage.run({
+          id: image.id,
+          contactId: contact.id,
+          filename: image.filename,
+          originalName: image.originalName,
+          mimeType: image.mimeType,
+          size: image.size,
+          kind: image.kind,
+          notes: image.notes,
+          createdAt: image.createdAt || timestamp
+        });
+        if (previous) {
+          summary.images.updated += 1;
+        } else {
+          summary.images.created += 1;
+        }
+      }
+    }
+
+    for (const relationship of archivePayload.relationships) {
+      const existingById = relationshipRawById.get(relationship.id);
+      const existingPair = relationshipRawByPair.get(
+        relationship.sourceContactId,
+        relationship.targetContactId,
+        relationship.targetContactId,
+        relationship.sourceContactId
+      );
+      const targetId = existingPair?.id || relationship.id;
+      if (existingPair && existingById && existingById.id !== existingPair.id) {
+        db.prepare("DELETE FROM relationships WHERE id = ?").run(existingById.id);
+        summary.warnings.push(`Merged relationship ${relationship.id} into existing pair ${existingPair.id}.`);
+      }
+
+      const params = {
+        ...relationship,
+        id: targetId,
+        createdAt: relationship.createdAt || existingPair?.created_at || existingById?.created_at || timestamp,
+        updatedAt: relationship.updatedAt || timestamp
+      };
+
+      if (existingPair || existingById) {
+        updateImportedRelationship.run(params);
+        summary.relationships.updated += 1;
+      } else {
+        insertImportedRelationship.run(params);
+        summary.relationships.created += 1;
+      }
+    }
+
+    return { summary, filesToDelete: [...filesToDelete] };
+  })(archive);
+}
+
 function relationshipLabel(row) {
   return row.relationship_type === "Custom" && row.custom_relationship_type
     ? row.custom_relationship_type
@@ -484,6 +862,59 @@ function validateRelationship(input, existingId = null) {
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, dataDir, uploadDir });
+});
+
+app.get("/api/contacts/export", async (_req, res, next) => {
+  try {
+    const archive = {
+      format: archiveFormat,
+      version: archiveVersion,
+      exportedAt: nowIso(),
+      contacts: await Promise.all(getAllContacts().map(archiveContact)),
+      relationships: allRelationships()
+    };
+    const filename = `rolodexian-contacts-${archiveFileDate()}.json`;
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(JSON.stringify(archive, null, 2));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/contacts/import", archiveUpload.single("archive"), async (req, res, next) => {
+  const writtenFiles = [];
+  let committed = false;
+  try {
+    if (!req.file) throw badRequest("Archive file is required.");
+    const archive = parseArchive(req.file.buffer);
+    for (const contact of archive.contacts) {
+      for (const image of contact.images) {
+        const destination = path.join(uploadDir, image.filename);
+        await fsp.writeFile(destination, image.buffer);
+        writtenFiles.push(destination);
+      }
+    }
+
+    let result;
+    try {
+      result = importArchiveTx(archive);
+      committed = true;
+    } catch (error) {
+      await Promise.allSettled(writtenFiles.map((file) => fsp.unlink(file)));
+      throw error;
+    }
+
+    await Promise.allSettled(
+      result.filesToDelete.map((filename) => fsp.unlink(path.join(uploadDir, filename)))
+    );
+    res.json({ summary: result.summary });
+  } catch (error) {
+    if (!committed) {
+      await Promise.allSettled(writtenFiles.map((file) => fsp.unlink(file)));
+    }
+    next(error);
+  }
 });
 
 app.get("/api/contacts", (req, res) => {
@@ -714,6 +1145,9 @@ app.get("/api/graph", (_req, res) => {
 app.use((err, _req, res, _next) => {
   if (err instanceof multer.MulterError) {
     return res.status(400).json({ error: err.message });
+  }
+  if (err.status >= 400 && err.status < 500) {
+    return res.status(err.status).json({ error: err.message });
   }
   console.error(err);
   res.status(500).json({ error: "Unexpected server error." });

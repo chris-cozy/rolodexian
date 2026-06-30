@@ -6,6 +6,7 @@ import SpriteText from "three-spritetext";
 import * as THREE from "three";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { api } from "../lib/api";
+import { defaultSettings, useSettings } from "../lib/settings";
 import type { GraphEdge, GraphNode, GraphResponse } from "../types";
 
 type Graph3DEdge = Omit<GraphEdge, "source" | "target"> & {
@@ -39,6 +40,11 @@ const CAMERA_DISTANCE = 520;
 const CAMERA_MIN_DISTANCE = 150;
 const CAMERA_MAX_DISTANCE = 760;
 const GRAPH_BOUNDS = 315;
+const BLOOM_STRENGTH = 0.72;
+const BLOOM_RADIUS = 0.38;
+const BLOOM_THRESHOLD = 0.24;
+const BLOOM_MIN_CAMERA_RATIO = 0.36;
+const BLOOM_MAX_CAMERA_RATIO = 1.15;
 
 function endpointId(endpoint: Graph3DEdge["source"] | Graph3DEdge["target"]) {
   if (typeof endpoint === "object" && endpoint !== null) return endpoint.id;
@@ -47,6 +53,22 @@ function endpointId(endpoint: Graph3DEdge["source"] | Graph3DEdge["target"]) {
 
 function normalizedStrength(edge: Pick<GraphEdge, "strength" | "manualStrength">) {
   return Math.max(0.08, Math.min(1, (edge.strength || edge.manualStrength || 35) / 100));
+}
+
+function mixHex(hex: string, amount: number) {
+  const color = new THREE.Color(hex);
+  color.lerp(new THREE.Color("#ffffff"), amount);
+  return `#${color.getHexString()}`;
+}
+
+function scaleHex(hex: string, amount: number) {
+  const color = new THREE.Color(hex);
+  color.multiplyScalar(amount);
+  return `#${color.getHexString()}`;
+}
+
+function hexNumber(hex: string) {
+  return new THREE.Color(hex).getHex();
 }
 
 function createContainmentForce(radius: number) {
@@ -84,6 +106,7 @@ function createContainmentForce(radius: number) {
 
 export default function GraphPage() {
   const navigate = useNavigate();
+  const { settings } = useSettings();
   const wrapRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
   const bloomPassRef = useRef<UnrealBloomPass | null>(null);
@@ -92,6 +115,23 @@ export default function GraphPage() {
   const [hoverNodeId, setHoverNodeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const graphTheme = useMemo(() => {
+    const accent = settings.accentColor;
+    const warm = accent === defaultSettings.accentColor ? "#c8ff64" : mixHex(accent, 0.48);
+    return {
+      accent,
+      accentNumber: hexNumber(accent),
+      accentStrong: mixHex(accent, 0.78),
+      accentStrongNumber: hexNumber(mixHex(accent, 0.78)),
+      accentSoftNumber: hexNumber(mixHex(accent, 0.48)),
+      accentMuted: mixHex(accent, 0.2),
+      accentDeepNumber: hexNumber(scaleHex(accent, 0.13)),
+      fogNumber: hexNumber(scaleHex(accent, 0.025)),
+      gridNumber: hexNumber(mixHex(accent, 0.22)),
+      gridDimNumber: hexNumber(scaleHex(accent, 0.26)),
+      warmNumber: hexNumber(warm)
+    };
+  }, [settings.accentColor]);
 
   async function loadGraph() {
     setLoading(true);
@@ -177,6 +217,21 @@ export default function GraphPage() {
     [hoverNodeId]
   );
 
+  const updateBloomForCamera = useCallback(() => {
+    const instance = graphRef.current;
+    const bloomPass = bloomPassRef.current;
+    if (!instance || !bloomPass) return;
+
+    const camera = instance.camera?.() as THREE.PerspectiveCamera | undefined;
+    if (!camera) return;
+
+    const distance = camera.position.distanceTo(ORIGIN) || CAMERA_DISTANCE;
+    const cameraRatio = Math.max(BLOOM_MIN_CAMERA_RATIO, Math.min(BLOOM_MAX_CAMERA_RATIO, distance / CAMERA_DISTANCE));
+    bloomPass.strength = BLOOM_STRENGTH * cameraRatio;
+    bloomPass.radius = BLOOM_RADIUS;
+    bloomPass.threshold = BLOOM_THRESHOLD;
+  }, []);
+
   const lockCamera = useCallback((transitionMs = 0) => {
     const instance = graphRef.current;
     if (!instance) return;
@@ -217,7 +272,8 @@ export default function GraphPage() {
       TWO: THREE.TOUCH.DOLLY_ROTATE
     };
     controls.update?.();
-  }, []);
+    updateBloomForCamera();
+  }, [updateBloomForCamera]);
 
   useEffect(() => {
     const instance = graphRef.current;
@@ -226,9 +282,9 @@ export default function GraphPage() {
     const scene = instance.scene?.() as THREE.Scene | undefined;
     if (scene && !scene.userData.terminalCoreReady) {
       scene.userData.terminalCoreReady = true;
-      scene.fog = new THREE.FogExp2(0x00120c, 0.0022);
+      scene.fog = new THREE.FogExp2(graphTheme.fogNumber, 0.0022);
 
-      const grid = new THREE.GridHelper(620, 20, 0x43ffad, 0x0b4f37);
+      const grid = new THREE.GridHelper(620, 20, graphTheme.gridNumber, graphTheme.gridDimNumber);
       grid.name = "terminal-core-grid";
       grid.position.y = -135;
       const gridMaterial = grid.material as THREE.Material | THREE.Material[];
@@ -242,7 +298,7 @@ export default function GraphPage() {
       const coreRing = new THREE.Mesh(
         new THREE.TorusGeometry(92, 0.42, 8, 128),
         new THREE.MeshBasicMaterial({
-          color: 0x57ffb8,
+          color: graphTheme.accentNumber,
           transparent: true,
           opacity: 0.25,
           blending: THREE.AdditiveBlending,
@@ -254,17 +310,33 @@ export default function GraphPage() {
       scene.add(coreRing);
     }
 
+    if (scene) {
+      if (scene.fog instanceof THREE.FogExp2) scene.fog.color.setHex(graphTheme.fogNumber);
+      const grid = scene.getObjectByName("terminal-core-grid") as THREE.GridHelper | undefined;
+      const gridMaterial = grid?.material as THREE.Material | THREE.Material[] | undefined;
+      if (gridMaterial) {
+        const materials = Array.isArray(gridMaterial) ? gridMaterial : [gridMaterial];
+        materials.forEach((material, index) => {
+          (material as THREE.LineBasicMaterial).color?.setHex(index === 0 ? graphTheme.gridNumber : graphTheme.gridDimNumber);
+        });
+      }
+      const coreRing = scene.getObjectByName("terminal-core-origin-ring") as THREE.Mesh | undefined;
+      const ringMaterial = coreRing?.material as THREE.MeshBasicMaterial | undefined;
+      ringMaterial?.color.setHex(graphTheme.accentNumber);
+    }
+
     if (!bloomPassRef.current) {
-      const bloomPass = new UnrealBloomPass(new THREE.Vector2(size.width, size.height), 0.72, 0.38, 0.24);
-      bloomPass.strength = 0.72;
-      bloomPass.radius = 0.38;
-      bloomPass.threshold = 0.24;
+      const bloomPass = new UnrealBloomPass(new THREE.Vector2(size.width, size.height), BLOOM_STRENGTH, BLOOM_RADIUS, BLOOM_THRESHOLD);
+      bloomPass.strength = BLOOM_STRENGTH;
+      bloomPass.radius = BLOOM_RADIUS;
+      bloomPass.threshold = BLOOM_THRESHOLD;
       instance.postProcessingComposer?.().addPass(bloomPass);
       bloomPassRef.current = bloomPass;
     }
 
     lockCamera(0);
-  }, [lockCamera, size.height, size.width]);
+    updateBloomForCamera();
+  }, [graphTheme, lockCamera, size.height, size.width, updateBloomForCamera]);
 
   useEffect(() => {
     const instance = graphRef.current;
@@ -290,6 +362,7 @@ export default function GraphPage() {
         controlsNow.target?.copy(ORIGIN);
         controlsNow.cursor?.copy(ORIGIN);
         camera.lookAt(ORIGIN);
+        updateBloomForCamera();
       });
     };
 
@@ -298,7 +371,7 @@ export default function GraphPage() {
       controls.removeEventListener?.("change", enforceBounds);
       if (frame) window.cancelAnimationFrame(frame);
     };
-  }, [graphData]);
+  }, [graphData, updateBloomForCamera]);
 
   useEffect(() => {
     const instance = graphRef.current;
@@ -330,8 +403,8 @@ export default function GraphPage() {
       const coreRadius = self ? 13.5 : 5.6 + strength * 5.8;
       const group = new THREE.Group();
 
-      const coreColor = self ? 0x9dffd0 : highlighted ? 0x48e89d : 0x0a3125;
-      const glowColor = self ? 0x43f79c : 0x25d97c;
+      const coreColor = self ? graphTheme.accentStrongNumber : highlighted ? graphTheme.accentNumber : graphTheme.accentDeepNumber;
+      const glowColor = self ? graphTheme.accentNumber : graphTheme.accentSoftNumber;
       const core = new THREE.Mesh(
         new THREE.SphereGeometry(coreRadius, self ? 32 : 20, self ? 24 : 14),
         new THREE.MeshBasicMaterial({
@@ -358,7 +431,7 @@ export default function GraphPage() {
       const shell = new THREE.Mesh(
         new THREE.SphereGeometry(coreRadius * 1.38, 12, 8),
         new THREE.MeshBasicMaterial({
-          color: self ? 0xaaffda : 0x74f8b6,
+          color: self ? graphTheme.accentStrongNumber : graphTheme.accentSoftNumber,
           wireframe: true,
           transparent: true,
           opacity: self ? 0.48 : highlighted ? 0.26 : 0.09,
@@ -373,7 +446,7 @@ export default function GraphPage() {
           const ring = new THREE.Mesh(
             new THREE.TorusGeometry(coreRadius * (1.95 + index * 0.36), 0.32, 8, 96),
             new THREE.MeshBasicMaterial({
-              color: index === 0 ? 0x9dffd0 : 0x43f79c,
+              color: index === 0 ? graphTheme.accentStrongNumber : graphTheme.accentNumber,
               transparent: true,
               opacity: hovered ? 0.44 : 0.28 - index * 0.06,
               blending: THREE.AdditiveBlending,
@@ -386,7 +459,7 @@ export default function GraphPage() {
         });
       }
 
-      const label = new SpriteText(self ? "SELF // ME" : node.label, self ? 7.2 : 4.8, highlighted ? "#d8fff2" : "#3f8469");
+      const label = new SpriteText(self ? "SELF // ME" : node.label, self ? 7.2 : 4.8, highlighted ? graphTheme.accentStrong : graphTheme.accentMuted);
       label.fontFace = "Cascadia Code, Consolas, monospace";
       label.fontWeight = self ? "900" : "800";
       label.backgroundColor = false;
@@ -399,7 +472,7 @@ export default function GraphPage() {
 
       return group;
     },
-    [connectedIds, hoverNodeId]
+    [connectedIds, graphTheme, hoverNodeId]
   );
 
   const linkMaterial = useCallback(
@@ -408,14 +481,14 @@ export default function GraphPage() {
       const unrelated = Boolean(hoverNodeId && !highlighted);
       const strength = normalizedStrength(link as GraphEdge);
       return new THREE.MeshBasicMaterial({
-        color: link.scope === "self" ? 0x4dffb2 : 0xb9ff77,
+        color: link.scope === "self" ? graphTheme.accentNumber : graphTheme.warmNumber,
         transparent: true,
         opacity: unrelated ? 0.045 : Math.min(0.92, 0.18 + strength * 0.46 + (highlighted ? 0.26 : 0)),
         blending: THREE.AdditiveBlending,
         depthWrite: false
       });
     },
-    [hoverNodeId, isHighlightedLink]
+    [graphTheme, hoverNodeId, isHighlightedLink]
   );
 
   return (
@@ -471,7 +544,7 @@ export default function GraphPage() {
           }}
           linkDirectionalParticles={(link: Graph3DEdge) => (isHighlightedLink(link) ? 4 : link.scope === "self" ? 1 : 0)}
           linkDirectionalParticleWidth={(link: Graph3DEdge) => (isHighlightedLink(link) ? 2.35 : 1.1)}
-          linkDirectionalParticleColor={(link: Graph3DEdge) => (isHighlightedLink(link) ? "#d8fff2" : "#57ffb8")}
+          linkDirectionalParticleColor={(link: Graph3DEdge) => (isHighlightedLink(link) ? graphTheme.accentStrong : graphTheme.accent)}
           linkDirectionalParticleSpeed={(link: Graph3DEdge) => 0.0026 + normalizedStrength(link as GraphEdge) * 0.006}
           linkHoverPrecision={7}
           warmupTicks={90}
