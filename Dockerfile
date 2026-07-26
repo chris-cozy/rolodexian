@@ -33,4 +33,4 @@ COPY package*.json ./
 RUN mkdir -p /app/data/uploads
 EXPOSE 4000
 VOLUME ["/app/data"]
-CMD ["npm", "start"]
+CMD ["node", "server/index.js"]
