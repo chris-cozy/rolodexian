@@ -28,6 +28,11 @@ export interface UploadedImage {
   url: string;
 }
 
+export interface ArchiveImage extends Omit<UploadedImage, "url"> {
+  encoding: "base64";
+  data: string;
+}
+
 export interface Appearance {
   race?: string;
   sex?: string;
@@ -84,6 +89,37 @@ export interface Relationship {
   lastInteractionDate?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ContactsArchiveV1 {
+  format: "rolodexian.contacts-export";
+  version: 1;
+  exportedAt: string;
+  contacts: Array<Omit<Contact, "images" | "profileImage"> & { images: ArchiveImage[] }>;
+  relationships: Relationship[];
+}
+
+export interface ImportSummary {
+  contacts: {
+    created: number;
+    updated: number;
+  };
+  relationships: {
+    created: number;
+    updated: number;
+  };
+  images: {
+    created: number;
+    updated: number;
+    skipped: number;
+  };
+  warnings: string[];
+}
+
+export interface AppSettings {
+  accentColor: string;
+  matrixRain: "full" | "subtle" | "off";
+  reducedMotion: boolean;
 }
 
 export interface GraphNode {

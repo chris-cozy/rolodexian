@@ -1,10 +1,10 @@
 :root {
   color-scheme: dark;
-  font-family: "Cascadia Code", "IBM Plex Mono", "Fira Code", Consolas, "Courier New", monospace;
+  font-family: "VT323", "Cascadia Code", "IBM Plex Mono", "Fira Code", Consolas, "Courier New", monospace;
   background: #06030a;
   color: #d9d3ca;
   --font-display: "Arial Narrow", "Roboto Condensed", "DIN Condensed", Impact, sans-serif;
-  --font-data: "Cascadia Code", "IBM Plex Mono", "Fira Code", Consolas, "Courier New", monospace;
+  --font-data: "VT323", "Cascadia Code", "IBM Plex Mono", "Fira Code", Consolas, "Courier New", monospace;
   --bg: #06030a;
   --bg-grid: #1a0d12;
   --surface: rgba(10, 7, 11, 0.96);
@@ -5596,5 +5596,187 @@ body:has(.graph-page) .mission-footer {
   .graph-command-bar span {
     width: 100%;
     margin: 0;
+  }
+}
+
+/* Import/export and appearance settings */
+.matrix-rain-subtle .matrix-rain-column {
+  opacity: calc(var(--rain-opacity) * 0.32);
+  animation-duration: calc(var(--rain-duration) * 1.7);
+}
+
+.reduced-motion .matrix-rain-column {
+  animation: none;
+  opacity: 0.08;
+  transform: translate3d(0, 128vh, 0);
+  will-change: auto;
+}
+
+.reduced-motion .contact-card:hover {
+  transform: none;
+}
+
+.transfer-grid,
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.transfer-panel,
+.import-result,
+.settings-preview {
+  display: grid;
+  gap: 12px;
+}
+
+.section-heading svg {
+  flex: 0 0 auto;
+  color: var(--warm);
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  background: var(--line-soft);
+}
+
+.metric-grid > div {
+  min-width: 0;
+  padding: 12px;
+  background: color-mix(in srgb, var(--surface-solid) 88%, transparent);
+}
+
+.metric-grid span,
+.metric-grid strong,
+.metric-grid small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.metric-grid span {
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+.metric-grid strong {
+  color: var(--accent-strong);
+  font-size: 0.98rem;
+  text-transform: uppercase;
+}
+
+.metric-grid small {
+  margin-top: 4px;
+  color: var(--ink);
+}
+
+.warning-list {
+  display: grid;
+  gap: 7px;
+}
+
+.warning-list p {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  margin: 0;
+  padding: 9px;
+  border: 1px solid color-mix(in srgb, var(--warm) 36%, transparent);
+  color: var(--warm);
+  background: var(--warm-soft);
+  overflow-wrap: anywhere;
+}
+
+.accent-control {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 10px;
+}
+
+input[type="color"] {
+  min-height: 42px;
+  padding: 4px;
+}
+
+.swatch-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.swatch-button {
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--line-soft);
+  background: var(--swatch);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--surface-solid) 60%, transparent);
+}
+
+.swatch-button.active {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--accent) 34%, transparent), inset 0 0 0 2px var(--surface-solid);
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  background: var(--line-soft);
+}
+
+.segment-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 42px;
+  border: 0;
+  color: var(--muted);
+  background: var(--surface-solid);
+  text-transform: uppercase;
+}
+
+.segment-button.active,
+.segment-button:hover {
+  color: var(--accent-on);
+  background: var(--accent);
+}
+
+.toggle-row {
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  margin-top: 12px;
+  padding: 11px;
+  border: 1px solid var(--line-soft);
+  background: var(--surface);
+}
+
+.toggle-row input {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+@media (max-width: 820px) {
+  .transfer-grid,
+  .settings-grid,
+  .metric-grid,
+  .accent-control,
+  .segmented-control {
+    grid-template-columns: 1fr;
   }
 }
