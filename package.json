@@ -22,15 +22,11 @@
     "multer": "^2.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-force-graph-3d": "^1.29.1",
-    "react-router-dom": "^6.28.1",
-    "three": "^0.185.0",
-    "three-spritetext": "^1.10.0"
+    "react-router-dom": "^6.28.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.5",
-    "@types/three": "^0.185.0",
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
     "typescript": "^5.7.2",

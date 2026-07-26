@@ -16,6 +16,7 @@ const dbPath = process.env.DATABASE_PATH || path.join(dataDir, "rolodexian.sqlit
 const port = Number(process.env.PORT || 4000);
 const isProduction = process.env.NODE_ENV === "production";
 const distDir = path.join(rootDir, "dist");
+const devWebUrl = process.env.DEV_WEB_URL || "http://localhost:5173";
 
 fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -711,6 +712,17 @@ app.get("/api/graph", (_req, res) => {
   res.json({ nodes, edges });
 });
 
+if (isProduction && fs.existsSync(distDir)) {
+  app.use(express.static(distDir));
+  app.get("*", (_req, res) => {
+    res.sendFile(path.join(distDir, "index.html"));
+  });
+} else if (!isProduction) {
+  app.get(/^\/(?!api(?:\/|$)|uploads(?:\/|$)).*/, (req, res) => {
+    res.redirect(307, new URL(req.originalUrl, devWebUrl).toString());
+  });
+}
+
 app.use((err, _req, res, _next) => {
   if (err instanceof multer.MulterError) {
     return res.status(400).json({ error: err.message });
@@ -719,13 +731,13 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: "Unexpected server error." });
 });
 
-if (isProduction && fs.existsSync(distDir)) {
-  app.use(express.static(distDir));
-  app.get("*", (_req, res) => {
-    res.sendFile(path.join(distDir, "index.html"));
-  });
+if (isProduction && !fs.existsSync(distDir)) {
+  console.warn("Frontend build not found. Run `npm run build` before `npm start`.");
 }
 
 app.listen(port, () => {
-  console.log(`Rolodexian API listening on http://localhost:${port}`);
+  console.log(`Rolodexian server listening on http://localhost:${port}`);
+  if (!isProduction) {
+    console.log(`Frontend development server: ${devWebUrl}`);
+  }
 });

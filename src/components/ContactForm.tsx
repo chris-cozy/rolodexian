@@ -1,5 +1,5 @@
 import { Plus, Save, Trash2 } from "lucide-react";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   formatKeyValueLines,
   formatLines,
@@ -14,18 +14,23 @@ import type { Contact, InteractionEvent, SocialAccount } from "../types";
 interface ContactFormProps {
   initialContact: Contact;
   onSubmit: (contact: Contact) => Promise<void>;
+  onChange?: (contact: Contact) => void;
   submitLabel: string;
 }
 
 const blankSocial: SocialAccount = { platform: "", username: "", url: "", notes: "" };
 const blankInteraction: InteractionEvent = { title: "", occurredOn: "", notes: "" };
 
-export default function ContactForm({ initialContact, onSubmit, submitLabel }: ContactFormProps) {
+export default function ContactForm({ initialContact, onSubmit, onChange, submitLabel }: ContactFormProps) {
   const [contact, setContact] = useState<Contact>(initialContact);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const customFieldsText = useMemo(() => formatKeyValueLines(contact.customFields), [contact.customFields]);
+
+  useEffect(() => {
+    onChange?.(contact);
+  }, [contact, onChange]);
 
   function patchContact(patch: Partial<Contact>) {
     setContact((current) => ({ ...current, ...patch }));
@@ -77,21 +82,26 @@ export default function ContactForm({ initialContact, onSubmit, submitLabel }: C
   }
 
   return (
-    <form className="editor-form" onSubmit={handleSubmit}>
+    <form className="editor-form" id="contact-editor-form" onSubmit={handleSubmit}>
       {error ? <div className="form-error">{error}</div> : null}
 
-      <section className="form-section">
+      <section className="form-section" id="form-profile">
         <div className="section-heading">
           <h2>Profile</h2>
         </div>
-        <div className="form-grid">
+        <div className="profile-section-layout">
+          <div className="form-ident-scan" aria-hidden="true">
+            <span>{contact.name ? contact.name.split(" ").map((part) => part[0]).join("").slice(0, 2) : "RX"}</span>
+            <small>Identification Scan</small>
+          </div>
+          <div className="form-profile-fields">
+            <div className="form-grid">
           <label>
             Name
             <input
               value={contact.name}
               onChange={(event) => patchContact({ name: event.target.value })}
               required
-              autoFocus
             />
           </label>
           <label>
@@ -137,28 +147,30 @@ export default function ContactForm({ initialContact, onSubmit, submitLabel }: C
               onChange={(event) => patchContact({ lastInteractionDate: event.target.value })}
             />
           </label>
+            </div>
+            <label className="slider-field">
+              Relationship strength
+              <span>{contact.relationshipStrength}</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={contact.relationshipStrength}
+                onChange={(event) => patchContact({ relationshipStrength: Number(event.target.value) })}
+              />
+            </label>
+            <label>
+              Relationship notes
+              <textarea
+                value={contact.selfRelationshipNotes || ""}
+                onChange={(event) => patchContact({ selfRelationshipNotes: event.target.value })}
+              />
+            </label>
+          </div>
         </div>
-        <label className="slider-field">
-          Relationship strength
-          <span>{contact.relationshipStrength}</span>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={contact.relationshipStrength}
-            onChange={(event) => patchContact({ relationshipStrength: Number(event.target.value) })}
-          />
-        </label>
-        <label>
-          Relationship notes
-          <textarea
-            value={contact.selfRelationshipNotes || ""}
-            onChange={(event) => patchContact({ selfRelationshipNotes: event.target.value })}
-          />
-        </label>
       </section>
 
-      <section className="form-section">
+      <section className="form-section" id="form-appearance">
         <div className="section-heading">
           <h2>Appearance</h2>
         </div>
@@ -185,7 +197,7 @@ export default function ContactForm({ initialContact, onSubmit, submitLabel }: C
         </label>
       </section>
 
-      <section className="form-section">
+      <section className="form-section" id="form-social-accounts">
         <div className="section-heading">
           <h2>Social Accounts</h2>
           <button
@@ -235,7 +247,7 @@ export default function ContactForm({ initialContact, onSubmit, submitLabel }: C
         </div>
       </section>
 
-      <section className="form-section">
+      <section className="form-section" id="form-interactions">
         <div className="section-heading">
           <h2>Interactions</h2>
           <button
@@ -284,7 +296,7 @@ export default function ContactForm({ initialContact, onSubmit, submitLabel }: C
         </div>
       </section>
 
-      <section className="form-section">
+      <section className="form-section" id="form-preferences">
         <div className="section-heading">
           <h2>Preferences</h2>
         </div>
@@ -331,7 +343,7 @@ export default function ContactForm({ initialContact, onSubmit, submitLabel }: C
         </label>
       </section>
 
-      <section className="form-section">
+      <section className="form-section" id="form-notes">
         <div className="section-heading">
           <h2>Notes</h2>
         </div>

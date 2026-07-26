@@ -71,6 +71,8 @@ http://localhost:5173
 ```
 
 The dev server proxies `/api` and `/uploads` to the Express API on port `4000`.
+If you open `http://localhost:4000` during development, the API server redirects
+you to the frontend instead of showing a `Cannot GET /` response.
 
 ## Demo Data
 
@@ -109,6 +111,7 @@ See `.env.example`.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` | `4000` | HTTP port for the Express server |
+| `DEV_WEB_URL` | `http://localhost:5173` | Frontend URL used by the development API redirect |
 | `DATA_DIR` | `./data` locally, `/app/data` in Docker | Persistent app data directory |
 | `UPLOAD_DIR` | `${DATA_DIR}/uploads` | Uploaded image storage |
 | `DATABASE_PATH` | `${DATA_DIR}/rolodexian.sqlite` | SQLite database file |

@@ -1,95 +1,66 @@
-import ForceGraph3D from "react-force-graph-3d";
-import { RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Crosshair, Minus, Plus, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type WheelEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import SpriteText from "three-spritetext";
-import * as THREE from "three";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { api } from "../lib/api";
 import type { GraphEdge, GraphNode, GraphResponse } from "../types";
 
-type Graph3DEdge = Omit<GraphEdge, "source" | "target"> & {
-  source?: string | GraphNode;
-  target?: string | GraphNode;
+type PositionedNode = GraphNode & {
+  px: number;
+  py: number;
 };
 
-type OrbitControlsLike = {
-  target?: THREE.Vector3;
-  cursor?: THREE.Vector3;
-  enablePan?: boolean;
-  enableDamping?: boolean;
-  dampingFactor?: number;
-  rotateSpeed?: number;
-  zoomSpeed?: number;
-  minDistance?: number;
-  maxDistance?: number;
-  minPolarAngle?: number;
-  maxPolarAngle?: number;
-  minTargetRadius?: number;
-  maxTargetRadius?: number;
-  mouseButtons?: Record<string, number>;
-  touches?: Record<string, number>;
-  update?: () => void;
-  addEventListener?: (type: string, listener: () => void) => void;
-  removeEventListener?: (type: string, listener: () => void) => void;
+type ViewTransform = {
+  x: number;
+  y: number;
+  scale: number;
 };
 
-const ORIGIN = new THREE.Vector3(0, 0, 0);
-const CAMERA_DISTANCE = 520;
-const CAMERA_MIN_DISTANCE = 150;
-const CAMERA_MAX_DISTANCE = 760;
-const GRAPH_BOUNDS = 315;
+type DragState = {
+  pointerId: number;
+  clientX: number;
+  clientY: number;
+  x: number;
+  y: number;
+};
 
-function endpointId(endpoint: Graph3DEdge["source"] | Graph3DEdge["target"]) {
-  if (typeof endpoint === "object" && endpoint !== null) return endpoint.id;
-  return endpoint || "";
+const DEFAULT_VIEW: ViewTransform = { x: 0, y: 0, scale: 1 };
+const MIN_ZOOM = 0.7;
+const MAX_ZOOM = 2.4;
+
+function endpointId(endpoint: GraphEdge["source"] | GraphEdge["target"]) {
+  return typeof endpoint === "object" ? endpoint.id : endpoint;
 }
 
-function normalizedStrength(edge: Pick<GraphEdge, "strength" | "manualStrength">) {
-  return Math.max(0.08, Math.min(1, (edge.strength || edge.manualStrength || 35) / 100));
+function edgeStrength(edge: Pick<GraphEdge, "strength" | "manualStrength">) {
+  return Math.max(8, Math.min(100, edge.strength || edge.manualStrength || 35));
 }
 
-function createContainmentForce(radius: number) {
-  let nodes: GraphNode[] = [];
-  const force = (alpha: number) => {
-    nodes.forEach((node) => {
-      if (node.id === "self") return;
-      const x = node.x || 0;
-      const y = node.y || 0;
-      const z = node.z || 0;
-      const distance = Math.sqrt(x * x + y * y + z * z) || 1;
-      const outerOverflow = Math.max(0, distance - radius);
-      const innerOverflow = Math.max(0, 88 - distance);
+function strengthClass(strength: number) {
+  if (strength >= 75) return "strong";
+  if (strength >= 40) return "moderate";
+  return "weak";
+}
 
-      if (outerOverflow > 0) {
-        const pull = (outerOverflow / distance) * alpha * 0.34;
-        node.vx = (node.vx || 0) - x * pull;
-        node.vy = (node.vy || 0) - y * pull;
-        node.vz = (node.vz || 0) - z * pull;
-      }
+function strengthColor(strength: number) {
+  if (strength >= 75) return "#62ff9d";
+  if (strength >= 40) return "#ffd65a";
+  return "#ff3347";
+}
 
-      if (innerOverflow > 0) {
-        const push = (innerOverflow / distance) * alpha * 0.12;
-        node.vx = (node.vx || 0) + x * push;
-        node.vy = (node.vy || 0) + y * push;
-        node.vz = (node.vz || 0) + z * push;
-      }
-    });
-  };
-  force.initialize = (nextNodes: GraphNode[]) => {
-    nodes = nextNodes;
-  };
-  return force;
+function clampZoom(value: number) {
+  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, value));
 }
 
 export default function GraphPage() {
   const navigate = useNavigate();
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const graphRef = useRef<any>(null);
-  const bloomPassRef = useRef<UnrealBloomPass | null>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<DragState | null>(null);
   const [size, setSize] = useState({ width: 900, height: 650 });
   const [graph, setGraph] = useState<GraphResponse>({ nodes: [], edges: [] });
+  const [selectedNodeId, setSelectedNodeId] = useState("self");
   const [hoverNodeId, setHoverNodeId] = useState<string | null>(null);
+  const [view, setView] = useState<ViewTransform>(DEFAULT_VIEW);
+  const [isPanning, setIsPanning] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -98,6 +69,7 @@ export default function GraphPage() {
     try {
       const nextGraph = await api.getGraph();
       setGraph(nextGraph);
+      setSelectedNodeId(current => nextGraph.nodes.some(node => node.id === current) ? current : "self");
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load graph.");
@@ -111,383 +83,381 @@ export default function GraphPage() {
   }, []);
 
   useEffect(() => {
-    if (!wrapRef.current) return;
+    if (!shellRef.current) return;
     const observer = new ResizeObserver(([entry]) => {
       setSize({
-        width: Math.max(320, Math.floor(entry.contentRect.width)),
+        width: Math.max(300, Math.floor(entry.contentRect.width)),
         height: Math.max(420, Math.floor(entry.contentRect.height))
       });
     });
-    observer.observe(wrapRef.current);
+    observer.observe(shellRef.current);
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
-    bloomPassRef.current?.setSize(size.width, size.height);
-  }, [size]);
+  const positionedNodes = useMemo<PositionedNode[]>(() => {
+    const centerX = size.width / 2;
+    const centerY = size.height / 2 + Math.min(20, size.height * 0.025);
+    const contacts = graph.nodes.filter(node => node.id !== "self");
+    const count = Math.max(1, contacts.length);
+    const radiusX = Math.max(78, Math.min((size.width - 148) / 2, 385));
+    const radiusY = size.width < 600
+      ? Math.max(112, Math.min(size.height * 0.26, 135))
+      : Math.max(135, Math.min(size.height * 0.31, 235));
+    const order = new Map(contacts.map((node, index) => [node.id, index]));
 
-  const graphData = useMemo(() => {
-    const contactNodes = graph.nodes.filter((node) => node.id !== "self");
-    const nodeCount = Math.max(1, contactNodes.length);
+    return graph.nodes.map(node => {
+      if (node.id === "self") return { ...node, px: centerX, py: centerY };
+      const index = order.get(node.id) || 0;
+      const angle = -Math.PI / 2 + (index / count) * Math.PI * 2;
+      const alternatingRadius = index % 2 ? 0.92 : 1;
+      return {
+        ...node,
+        px: centerX + Math.cos(angle) * radiusX * alternatingRadius,
+        py: centerY + Math.sin(angle) * radiusY * alternatingRadius
+      };
+    });
+  }, [graph.nodes, size]);
 
-    return {
-      nodes: graph.nodes.map((node, index) => {
-        if (node.id === "self") {
-          return { ...node, x: 0, y: 0, z: 0, fx: 0, fy: 0, fz: 0 };
-        }
+  const nodeById = useMemo(
+    () => new Map(positionedNodes.map(node => [node.id, node])),
+    [positionedNodes]
+  );
 
-        const contactIndex = Math.max(0, index - 1);
-        const angle = contactIndex * Math.PI * (3 - Math.sqrt(5));
-        const band = contactIndex % 5;
-        const radius = 150 + (band % 3) * 34 + Math.min(54, nodeCount * 2.2);
-
-        return {
-          ...node,
-          x: Math.cos(angle) * radius,
-          y: Math.sin(angle) * radius * 0.78,
-          z: (band - 2) * 42 + Math.sin(angle * 1.7) * 28
-        };
-      }),
-      links: graph.edges.map((edge) => ({ ...edge }))
-    };
-  }, [graph]);
-
-  const hoverNode = useMemo(() => {
-    if (!hoverNodeId) return null;
-    return graph.nodes.find((node) => node.id === hoverNodeId) || null;
-  }, [graph.nodes, hoverNodeId]);
+  const selectedNode = nodeById.get(selectedNodeId) || nodeById.get("self") || null;
+  const focusedNodeId = hoverNodeId || selectedNode?.id || "self";
 
   const connectedIds = useMemo(() => {
-    if (!hoverNodeId) return new Set<string>();
-    const ids = new Set<string>([hoverNodeId]);
-    graph.edges.forEach((edge) => {
+    const ids = new Set<string>([focusedNodeId]);
+    graph.edges.forEach(edge => {
       const source = endpointId(edge.source);
       const target = endpointId(edge.target);
-      if (source === hoverNodeId) ids.add(target);
-      if (target === hoverNodeId) ids.add(source);
+      if (source === focusedNodeId) ids.add(target);
+      if (target === focusedNodeId) ids.add(source);
     });
     return ids;
-  }, [graph.edges, hoverNodeId]);
+  }, [focusedNodeId, graph.edges]);
 
-  const isHighlightedLink = useCallback(
-    (link: Graph3DEdge) => {
-      if (!hoverNodeId) return false;
-      return endpointId(link.source) === hoverNodeId || endpointId(link.target) === hoverNodeId;
-    },
-    [hoverNodeId]
-  );
+  const strengthSummary = useMemo(() => {
+    return graph.edges.reduce(
+      (summary, edge) => {
+        const strength = edgeStrength(edge);
+        if (strength >= 75) summary.strong += 1;
+        else if (strength >= 40) summary.moderate += 1;
+        else summary.weak += 1;
+        return summary;
+      },
+      { strong: 0, moderate: 0, weak: 0 }
+    );
+  }, [graph.edges]);
 
-  const lockCamera = useCallback((transitionMs = 0) => {
-    const instance = graphRef.current;
-    if (!instance) return;
+  function fitNetwork() {
+    setView(DEFAULT_VIEW);
+  }
 
-    const camera = instance.camera?.() as THREE.PerspectiveCamera | undefined;
-    if (camera) {
-      const distance = Math.max(CAMERA_MIN_DISTANCE, Math.min(CAMERA_MAX_DISTANCE, camera.position.distanceTo(ORIGIN) || CAMERA_DISTANCE));
-      if (Math.abs(camera.position.distanceTo(ORIGIN) - distance) > 0.1) {
-        camera.position.setLength(distance);
-      }
-      camera.lookAt(ORIGIN);
-    }
+  function resetView() {
+    setSelectedNodeId("self");
+    setHoverNodeId(null);
+    setView(DEFAULT_VIEW);
+  }
 
-    instance.cameraPosition?.({ z: CAMERA_DISTANCE, y: 56 }, { x: 0, y: 0, z: 0 }, transitionMs);
+  function centerSelected() {
+    if (!selectedNode) return;
+    const nextScale = Math.max(1.15, view.scale);
+    setView({
+      scale: nextScale,
+      x: size.width / 2 - selectedNode.px * nextScale,
+      y: size.height / 2 - selectedNode.py * nextScale
+    });
+  }
 
-    const controls = instance.controls?.() as OrbitControlsLike | undefined;
-    if (!controls) return;
-    controls.target?.copy(ORIGIN);
-    controls.cursor?.copy(ORIGIN);
-    controls.enablePan = false;
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.085;
-    controls.rotateSpeed = 0.42;
-    controls.zoomSpeed = 0.54;
-    controls.minDistance = CAMERA_MIN_DISTANCE;
-    controls.maxDistance = CAMERA_MAX_DISTANCE;
-    controls.minPolarAngle = Math.PI * 0.12;
-    controls.maxPolarAngle = Math.PI * 0.88;
-    controls.minTargetRadius = 0;
-    controls.maxTargetRadius = 0;
-    controls.mouseButtons = {
-      LEFT: THREE.MOUSE.ROTATE,
-      MIDDLE: THREE.MOUSE.DOLLY,
-      RIGHT: THREE.MOUSE.ROTATE
+  function zoomAt(nextScale: number, originX = size.width / 2, originY = size.height / 2) {
+    setView(current => {
+      const scale = clampZoom(nextScale);
+      const ratio = scale / current.scale;
+      return {
+        scale,
+        x: originX - (originX - current.x) * ratio,
+        y: originY - (originY - current.y) * ratio
+      };
+    });
+  }
+
+  function zoomBy(factor: number) {
+    zoomAt(view.scale * factor);
+  }
+
+  function handleWheel(event: WheelEvent<SVGSVGElement>) {
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const originX = (event.clientX - rect.left) * (size.width / rect.width);
+    const originY = (event.clientY - rect.top) * (size.height / rect.height);
+    zoomAt(view.scale * (event.deltaY < 0 ? 1.12 : 0.89), originX, originY);
+  }
+
+  function handlePointerDown(event: ReactPointerEvent<SVGSVGElement>) {
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      x: view.x,
+      y: view.y
     };
-    controls.touches = {
-      ONE: THREE.TOUCH.ROTATE,
-      TWO: THREE.TOUCH.DOLLY_ROTATE
-    };
-    controls.update?.();
-  }, []);
+    setIsPanning(true);
+  }
 
-  useEffect(() => {
-    const instance = graphRef.current;
-    if (!instance) return;
+  function handlePointerMove(event: ReactPointerEvent<SVGSVGElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratioX = size.width / rect.width;
+    const ratioY = size.height / rect.height;
+    const limitX = size.width * 0.8;
+    const limitY = size.height * 0.8;
+    setView(current => ({
+      ...current,
+      x: Math.max(-limitX, Math.min(limitX, drag.x + (event.clientX - drag.clientX) * ratioX)),
+      y: Math.max(-limitY, Math.min(limitY, drag.y + (event.clientY - drag.clientY) * ratioY))
+    }));
+  }
 
-    const scene = instance.scene?.() as THREE.Scene | undefined;
-    if (scene && !scene.userData.terminalCoreReady) {
-      scene.userData.terminalCoreReady = true;
-      scene.fog = new THREE.FogExp2(0x00120c, 0.0022);
+  function handlePointerEnd(event: ReactPointerEvent<SVGSVGElement>) {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    setIsPanning(false);
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  }
 
-      const grid = new THREE.GridHelper(620, 20, 0x43ffad, 0x0b4f37);
-      grid.name = "terminal-core-grid";
-      grid.position.y = -135;
-      const gridMaterial = grid.material as THREE.Material | THREE.Material[];
-      (Array.isArray(gridMaterial) ? gridMaterial : [gridMaterial]).forEach((material) => {
-        material.transparent = true;
-        material.opacity = 0.28;
-        material.depthWrite = false;
-      });
-      scene.add(grid);
+  function handleViewportKeyDown(event: React.KeyboardEvent<SVGSVGElement>) {
+    const panStep = event.shiftKey ? 42 : 22;
+    if (event.key === "+" || event.key === "=") zoomBy(1.12);
+    else if (event.key === "-") zoomBy(0.89);
+    else if (event.key === "0") fitNetwork();
+    else if (event.key === "ArrowLeft") setView(current => ({ ...current, x: current.x + panStep }));
+    else if (event.key === "ArrowRight") setView(current => ({ ...current, x: current.x - panStep }));
+    else if (event.key === "ArrowUp") setView(current => ({ ...current, y: current.y + panStep }));
+    else if (event.key === "ArrowDown") setView(current => ({ ...current, y: current.y - panStep }));
+    else return;
+    event.preventDefault();
+  }
 
-      const coreRing = new THREE.Mesh(
-        new THREE.TorusGeometry(92, 0.42, 8, 128),
-        new THREE.MeshBasicMaterial({
-          color: 0x57ffb8,
-          transparent: true,
-          opacity: 0.25,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false
-        })
-      );
-      coreRing.name = "terminal-core-origin-ring";
-      coreRing.rotation.x = Math.PI / 2;
-      scene.add(coreRing);
-    }
-
-    if (!bloomPassRef.current) {
-      const bloomPass = new UnrealBloomPass(new THREE.Vector2(size.width, size.height), 0.72, 0.38, 0.24);
-      bloomPass.strength = 0.72;
-      bloomPass.radius = 0.38;
-      bloomPass.threshold = 0.24;
-      instance.postProcessingComposer?.().addPass(bloomPass);
-      bloomPassRef.current = bloomPass;
-    }
-
-    lockCamera(0);
-  }, [lockCamera, size.height, size.width]);
-
-  useEffect(() => {
-    const instance = graphRef.current;
-    if (!instance) return;
-
-    const controls = instance.controls?.() as OrbitControlsLike | undefined;
-    if (!controls?.addEventListener) return;
-
-    let frame = 0;
-    const enforceBounds = () => {
-      if (frame) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = 0;
-        const camera = instance.camera?.() as THREE.PerspectiveCamera | undefined;
-        const controlsNow = instance.controls?.() as OrbitControlsLike | undefined;
-        if (!camera || !controlsNow) return;
-
-        const distance = camera.position.distanceTo(ORIGIN);
-        const clampedDistance = Math.max(CAMERA_MIN_DISTANCE, Math.min(CAMERA_MAX_DISTANCE, distance || CAMERA_DISTANCE));
-        if (Math.abs(distance - clampedDistance) > 0.1) {
-          camera.position.setLength(clampedDistance);
-        }
-        controlsNow.target?.copy(ORIGIN);
-        controlsNow.cursor?.copy(ORIGIN);
-        camera.lookAt(ORIGIN);
-      });
-    };
-
-    controls.addEventListener("change", enforceBounds);
-    return () => {
-      controls.removeEventListener?.("change", enforceBounds);
-      if (frame) window.cancelAnimationFrame(frame);
-    };
-  }, [graphData]);
-
-  useEffect(() => {
-    const instance = graphRef.current;
-    if (!instance || graphData.nodes.length === 0) return;
-
-    const charge = instance.d3Force?.("charge") as any;
-    const link = instance.d3Force?.("link") as any;
-    charge?.strength?.(-210);
-    charge?.distanceMax?.(460);
-    link?.distance?.((edge: GraphEdge) => (edge.scope === "self" ? 116 + (1 - normalizedStrength(edge)) * 74 : 96 + (1 - normalizedStrength(edge)) * 54));
-    link?.strength?.((edge: GraphEdge) => (edge.scope === "self" ? 0.86 : 0.28 + normalizedStrength(edge) * 0.34));
-    instance.d3Force?.("hologramBounds", createContainmentForce(GRAPH_BOUNDS));
-    instance.d3ReheatSimulation?.();
-
-    const fitSoon = window.setTimeout(() => lockCamera(450), 260);
-    const fitLater = window.setTimeout(() => lockCamera(450), 1500);
-    return () => {
-      window.clearTimeout(fitSoon);
-      window.clearTimeout(fitLater);
-    };
-  }, [graphData, lockCamera]);
-
-  const nodeThreeObject = useCallback(
-    (node: GraphNode) => {
-      const highlighted = !hoverNodeId || connectedIds.has(node.id);
-      const hovered = hoverNodeId === node.id;
-      const self = node.type === "self";
-      const strength = Math.max(0.16, Math.min(1, (node.suggestedStrength || node.strength || 58) / 100));
-      const coreRadius = self ? 13.5 : 5.6 + strength * 5.8;
-      const group = new THREE.Group();
-
-      const coreColor = self ? 0x9dffd0 : highlighted ? 0x48e89d : 0x0a3125;
-      const glowColor = self ? 0x43f79c : 0x25d97c;
-      const core = new THREE.Mesh(
-        new THREE.SphereGeometry(coreRadius, self ? 32 : 20, self ? 24 : 14),
-        new THREE.MeshBasicMaterial({
-          color: coreColor,
-          transparent: true,
-          opacity: self ? (hovered ? 0.88 : 0.78) : highlighted ? (hovered ? 0.86 : 0.68) : 0.2,
-          blending: THREE.NormalBlending
-        })
-      );
-      group.add(core);
-
-      const halo = new THREE.Mesh(
-        new THREE.SphereGeometry(coreRadius * (hovered ? 2.05 : self ? 1.75 : 1.55), 24, 16),
-        new THREE.MeshBasicMaterial({
-          color: glowColor,
-          transparent: true,
-          opacity: hovered ? 0.18 : self ? 0.105 : highlighted ? 0.08 : 0.025,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false
-        })
-      );
-      group.add(halo);
-
-      const shell = new THREE.Mesh(
-        new THREE.SphereGeometry(coreRadius * 1.38, 12, 8),
-        new THREE.MeshBasicMaterial({
-          color: self ? 0xaaffda : 0x74f8b6,
-          wireframe: true,
-          transparent: true,
-          opacity: self ? 0.48 : highlighted ? 0.26 : 0.09,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false
-        })
-      );
-      group.add(shell);
-
-      if (self) {
-        [0, Math.PI / 3, -Math.PI / 3].forEach((rotation, index) => {
-          const ring = new THREE.Mesh(
-            new THREE.TorusGeometry(coreRadius * (1.95 + index * 0.36), 0.32, 8, 96),
-            new THREE.MeshBasicMaterial({
-              color: index === 0 ? 0x9dffd0 : 0x43f79c,
-              transparent: true,
-              opacity: hovered ? 0.44 : 0.28 - index * 0.06,
-              blending: THREE.AdditiveBlending,
-              depthWrite: false
-            })
-          );
-          ring.rotation.x = Math.PI / 2;
-          ring.rotation.y = rotation;
-          group.add(ring);
-        });
-      }
-
-      const label = new SpriteText(self ? "SELF // ME" : node.label, self ? 7.2 : 4.8, highlighted ? "#d8fff2" : "#3f8469");
-      label.fontFace = "Cascadia Code, Consolas, monospace";
-      label.fontWeight = self ? "900" : "800";
-      label.backgroundColor = false;
-      label.padding = [2, 4];
-      label.position.y = -(coreRadius + (self ? 17 : 12));
-      label.material.depthWrite = false;
-      label.material.transparent = true;
-      label.material.opacity = hovered || self ? 0.98 : highlighted ? 0.72 : 0.26;
-      group.add(label);
-
-      return group;
-    },
-    [connectedIds, hoverNodeId]
-  );
-
-  const linkMaterial = useCallback(
-    (link: Graph3DEdge) => {
-      const highlighted = isHighlightedLink(link);
-      const unrelated = Boolean(hoverNodeId && !highlighted);
-      const strength = normalizedStrength(link as GraphEdge);
-      return new THREE.MeshBasicMaterial({
-        color: link.scope === "self" ? 0x4dffb2 : 0xb9ff77,
-        transparent: true,
-        opacity: unrelated ? 0.045 : Math.min(0.92, 0.18 + strength * 0.46 + (highlighted ? 0.26 : 0)),
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
-      });
-    },
-    [hoverNodeId, isHighlightedLink]
-  );
+  const viewportStyle = {
+    "--viewport-x": `${Math.round(view.x / Math.max(1, size.width) * 16)}px`,
+    "--viewport-y": `${Math.round(view.y / Math.max(1, size.height) * 16)}px`
+  } as CSSProperties;
 
   return (
     <div className="page graph-page">
-      <header className="page-header">
-        <div>
-          <p className="eyebrow">Network</p>
-          <h1>Graph Core</h1>
-        </div>
-        <button className="secondary-button" onClick={loadGraph}>
-          <RefreshCw size={17} />
-          Refresh
-        </button>
-      </header>
-
       {error ? <div className="form-error">{error}</div> : null}
       {loading ? <div className="status-line">Loading graph</div> : null}
 
-      <div className="data-strip">
-        <span>Nodes: {graph.nodes.length}</span>
-        <span>Edges: {graph.edges.length}</span>
-        <span>Self Links: {graph.edges.filter((edge) => edge.scope === "self").length}</span>
-        <span>Focus: {hoverNode?.label || "core"}</span>
+      <div className="graph-console-layout">
+        <aside className="graph-rail graph-rail-left">
+          <section className="rail-panel">
+            <h2>Network Summary</h2>
+            <dl>
+              <div><dt>Nodes</dt><dd>{String(graph.nodes.length).padStart(2, "0")}</dd></div>
+              <div><dt>Edges</dt><dd>{String(graph.edges.length).padStart(2, "0")}</dd></div>
+              <div><dt>Self links</dt><dd>{String(graph.edges.filter(edge => edge.scope === "self").length).padStart(2, "0")}</dd></div>
+              <div><dt>Core state</dt><dd>LOCKED</dd></div>
+            </dl>
+          </section>
+          <section className="rail-panel">
+            <h2>Strength Distribution</h2>
+            <div className="strength-distribution">
+              <div><span>Strong</span><i className="strong" style={{ width: `${Math.max(8, strengthSummary.strong * 18)}%` }} /><b>{strengthSummary.strong}</b></div>
+              <div><span>Moderate</span><i className="moderate" style={{ width: `${Math.max(8, strengthSummary.moderate * 18)}%` }} /><b>{strengthSummary.moderate}</b></div>
+              <div><span>Weak</span><i className="weak" style={{ width: `${Math.max(8, strengthSummary.weak * 18)}%` }} /><b>{strengthSummary.weak}</b></div>
+            </div>
+          </section>
+          <section className="rail-panel selected-record-panel" aria-live="polite">
+            <h2>Selected Record</h2>
+            <Crosshair size={24} />
+            <strong>{selectedNode?.type === "self" ? "SELF // CORE" : selectedNode?.label || "No selection"}</strong>
+            <span>{selectedNode?.relationshipType || "System anchor"}</span>
+            <small>
+              {selectedNode?.type === "contact"
+                ? `Signal strength ${Math.round(selectedNode.suggestedStrength || selectedNode.strength || 0)}%`
+                : "Select a node to inspect"}
+            </small>
+            {selectedNode?.contactId ? (
+              <button className="secondary-button graph-record-action" onClick={() => navigate(`/contacts/${selectedNode.contactId}`)}>
+                Open Dossier
+              </button>
+            ) : null}
+          </section>
+        </aside>
+
+        <div className="graph-shell graph-shell-2d" ref={shellRef}>
+          <header className="graph-title-overlay">
+            <p className="eyebrow">Local Social Topology</p>
+            <h1>Relationship Network</h1>
+            <div className="graph-view-controls">
+              <button className="icon-button" onClick={() => zoomBy(0.89)} aria-label="Zoom out" title="Zoom out">
+                <Minus size={15} />
+              </button>
+              <button className="icon-button" onClick={loadGraph} aria-label="Refresh network" title="Refresh network">
+                <RefreshCw size={15} />
+              </button>
+              <button className="icon-button" onClick={() => zoomBy(1.12)} aria-label="Zoom in" title="Zoom in">
+                <Plus size={15} />
+              </button>
+            </div>
+          </header>
+          <div className="graph-hud" aria-hidden="true">
+            <span>View: 2D Pan / Zoom</span>
+            <span>Zoom: {Math.round(view.scale * 100)}%</span>
+            <span>Focus: {selectedNode?.type === "self" ? "core" : selectedNode?.label || "core"}</span>
+          </div>
+          <p className="sr-only" id="graph-interaction-help">
+            Use drag or arrow keys to pan. Use the mouse wheel, plus and minus keys, or zoom buttons to zoom. Press zero to fit the network.
+          </p>
+          <svg
+            className={`relationship-map ${isPanning ? "is-panning" : ""}`}
+            viewBox={`0 0 ${size.width} ${size.height}`}
+            role="group"
+            aria-label="Interactive relationship network"
+            aria-describedby="graph-interaction-help"
+            tabIndex={0}
+            onWheel={handleWheel}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerEnd}
+            onPointerCancel={handlePointerEnd}
+            onKeyDown={handleViewportKeyDown}
+          >
+            <defs>
+              <filter id="graph-glow-green" x="-100%" y="-100%" width="300%" height="300%">
+                <feGaussianBlur stdDeviation="4" result="blur" />
+                <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+              </filter>
+              <filter id="graph-glow-warm" x="-100%" y="-100%" width="300%" height="300%">
+                <feGaussianBlur stdDeviation="3" result="blur" />
+                <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+              </filter>
+              <filter id="graph-glow-danger" x="-100%" y="-100%" width="300%" height="300%">
+                <feGaussianBlur stdDeviation="3" result="blur" />
+                <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+              </filter>
+            </defs>
+            <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>
+              <g className="graph-orbit-rings" aria-hidden="true">
+                {[64, 112, 172, 235].map(radius => (
+                  <circle key={radius} cx={size.width / 2} cy={size.height / 2 + Math.min(20, size.height * 0.025)} r={radius} />
+                ))}
+              </g>
+
+              <g className="graph-links" aria-hidden="true">
+                {graph.edges.map(edge => {
+                  const source = nodeById.get(endpointId(edge.source));
+                  const target = nodeById.get(endpointId(edge.target));
+                  if (!source || !target) return null;
+                  const strength = edgeStrength(edge);
+                  const connected = source.id === focusedNodeId || target.id === focusedNodeId;
+                  const unrelated = focusedNodeId && !connected;
+                  return (
+                    <line
+                      key={edge.id}
+                      className={`graph-link ${strengthClass(strength)} ${connected ? "is-focused" : ""}`}
+                      x1={source.px}
+                      y1={source.py}
+                      x2={target.px}
+                      y2={target.py}
+                      stroke={strengthColor(strength)}
+                      strokeWidth={1 + (strength / 100) * (edge.scope === "self" ? 4.5 : 2.5)}
+                      opacity={unrelated ? 0.1 : Math.min(0.92, 0.3 + strength / 120 + (connected ? 0.12 : 0))}
+                    />
+                  );
+                })}
+              </g>
+
+              <g className="graph-nodes">
+                {positionedNodes.map(node => {
+                  const self = node.type === "self";
+                  const strength = Math.round(node.suggestedStrength || node.strength || 58);
+                  const className = strengthClass(strength);
+                  const radius = self ? 22 : 10 + strength / 18;
+                  const selected = selectedNode?.id === node.id;
+                  const related = connectedIds.has(node.id);
+                  const muted = Boolean(focusedNodeId && !related);
+                  const label = self ? "SELF // CORE" : node.label;
+                  return (
+                    <g
+                      key={node.id}
+                      className={`graph-node ${self ? "self" : className} ${selected ? "is-selected" : ""} ${muted ? "is-muted" : ""}`}
+                      transform={`translate(${node.px} ${node.py})`}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`${label}${self ? "" : `, ${node.relationshipType || "contact"}, ${strength} percent strength`}`}
+                      aria-pressed={selected}
+                      onPointerDown={event => event.stopPropagation()}
+                      onClick={() => setSelectedNodeId(node.id)}
+                      onMouseEnter={() => setHoverNodeId(node.id)}
+                      onMouseLeave={() => setHoverNodeId(null)}
+                      onKeyDown={event => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setSelectedNodeId(node.id);
+                        }
+                      }}
+                    >
+                      <circle className="graph-node-field" r={radius + (self ? 28 : 18)} />
+                      {[0, 8, 16].map(offset => <circle className="graph-node-ring" key={offset} r={radius + offset} />)}
+                      {selected ? <circle className="graph-node-focus" r={radius + 23} /> : null}
+                      <line className="graph-node-crosshair" x1={-(radius + 22)} x2={radius + 22} y1="0" y2="0" />
+                      <line className="graph-node-crosshair" x1="0" x2="0" y1={-(radius + 22)} y2={radius + 22} />
+                      <circle className="graph-node-core" r={Math.max(5, radius * 0.45)} />
+                      <text className="graph-node-label" y={radius + 31} textAnchor="middle">
+                        <tspan x="0">{label}</tspan>
+                        {!self ? <tspan className="graph-node-meta" x="0" dy="15">{strength}% // {node.relationshipType || "CONTACT"}</tspan> : null}
+                      </text>
+                    </g>
+                  );
+                })}
+              </g>
+            </g>
+          </svg>
+        </div>
+
+        <aside className="graph-rail graph-rail-right">
+          <section className="rail-panel graph-legend">
+            <h2>Graph Legend</h2>
+            <p><i className="legend-line strong" /> Strong <span>≥ 75%</span></p>
+            <p><i className="legend-line moderate" /> Moderate <span>40–74%</span></p>
+            <p><i className="legend-line weak" /> Weak <span>&lt; 40%</span></p>
+            <p><i className="legend-dot focus" /> Selected</p>
+          </section>
+          <section className="rail-panel camera-panel viewport-panel">
+            <h2>Viewport State</h2>
+            <div className="viewport-map" style={viewportStyle} aria-hidden="true"><span /></div>
+            <dl>
+              <div><dt>Mode</dt><dd>2D Pan / Zoom</dd></div>
+              <div><dt>Selection</dt><dd>{selectedNode?.type === "contact" ? "Contact" : "Core"}</dd></div>
+              <div><dt>Zoom</dt><dd>{view.scale.toFixed(2)}×</dd></div>
+              <div><dt>Bloom</dt><dd>Linked Signal</dd></div>
+            </dl>
+          </section>
+          <section className="rail-panel">
+            <h2>Network Metrics</h2>
+            <dl>
+              <div><dt>Visible nodes</dt><dd>{String(graph.nodes.length).padStart(2, "0")}</dd></div>
+              <div><dt>Visible edges</dt><dd>{String(graph.edges.length).padStart(2, "0")}</dd></div>
+              <div><dt>Focus</dt><dd>{selectedNode?.type === "contact" ? "CONTACT" : "CORE"}</dd></div>
+              <div><dt>Health</dt><dd>98%</dd></div>
+            </dl>
+          </section>
+        </aside>
       </div>
 
-      <div className="graph-shell" ref={wrapRef}>
-        <div className="graph-hud" aria-hidden="true">
-          <span>Center Lock: Active</span>
-          <span>Camera: Bounded Orbit</span>
-          <span>Bloom: Linked Signal</span>
-        </div>
-        <div className="graph-reticle" aria-hidden="true" />
-        <ForceGraph3D
-          ref={graphRef}
-          width={size.width}
-          height={size.height}
-          graphData={graphData}
-          controlType="orbit"
-          rendererConfig={{ alpha: true, antialias: true, powerPreference: "high-performance" }}
-          backgroundColor="rgba(0,0,0,0)"
-          showNavInfo={false}
-          nodeId="id"
-          nodeVal={(node: GraphNode) => (node.type === "self" ? 7 : 2.2)}
-          nodeThreeObject={(node) => nodeThreeObject(node as GraphNode)}
-          nodeLabel={(node: GraphNode) => node.label}
-          nodeOpacity={1}
-          nodeResolution={20}
-          linkMaterial={(link: Graph3DEdge) => linkMaterial(link)}
-          linkWidth={(link: Graph3DEdge) => {
-            const edge = link as GraphEdge;
-            const highlighted = isHighlightedLink(edge);
-            return Math.max(0.5, normalizedStrength(edge) * (edge.scope === "self" ? 4.4 : 2.7)) + (highlighted ? 1.45 : 0);
-          }}
-          linkDirectionalParticles={(link: Graph3DEdge) => (isHighlightedLink(link) ? 4 : link.scope === "self" ? 1 : 0)}
-          linkDirectionalParticleWidth={(link: Graph3DEdge) => (isHighlightedLink(link) ? 2.35 : 1.1)}
-          linkDirectionalParticleColor={(link: Graph3DEdge) => (isHighlightedLink(link) ? "#d8fff2" : "#57ffb8")}
-          linkDirectionalParticleSpeed={(link: Graph3DEdge) => 0.0026 + normalizedStrength(link as GraphEdge) * 0.006}
-          linkHoverPrecision={7}
-          warmupTicks={90}
-          cooldownTicks={170}
-          d3VelocityDecay={0.36}
-          enableNodeDrag={false}
-          enablePointerInteraction
-          enableNavigationControls
-          onEngineStop={() => lockCamera(300)}
-          onNodeHover={(node) => setHoverNodeId(node?.id ? String(node.id) : null)}
-          onNodeClick={(node) => {
-            const graphNode = node as GraphNode;
-            if (graphNode.contactId) navigate(`/contacts/${graphNode.contactId}`);
-          }}
-          showPointerCursor={(object) => Boolean((object as GraphNode | undefined)?.contactId)}
-        />
+      <div className="graph-command-bar">
+        <button className="secondary-button" onClick={fitNetwork}>Fit Network</button>
+        <button className="secondary-button" onClick={centerSelected} disabled={!selectedNode}>Center Selected</button>
+        <button className="secondary-button" onClick={resetView}>Reset View</button>
+        <span>Operator: User-01</span>
+        <span>Clearance: Level 3</span>
+        <span>Core Anchor Online // Signal Decay Nominal</span>
       </div>
     </div>
   );

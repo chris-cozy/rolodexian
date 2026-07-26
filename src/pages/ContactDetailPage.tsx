@@ -1,5 +1,6 @@
 import { ArrowLeft, CalendarDays, Edit3, ImagePlus, Link2, Plus, Save, Trash2, Upload, UsersRound, X } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import Avatar from "../components/Avatar";
 import StrengthMeter from "../components/StrengthMeter";
@@ -91,8 +92,9 @@ export default function ContactDetailPage() {
           <div>
             <Link className="back-link" to="/">
               <ArrowLeft size={16} />
-              Contacts
+              Personnel Index
             </Link>
+            <p className="eyebrow">Contact Dossier // Active Record</p>
             <h1>{contact.name}</h1>
             <p>{contact.nicknames.length ? contact.nicknames.join(", ") : displayRelationship(contact)}</p>
           </div>
@@ -106,13 +108,18 @@ export default function ContactDetailPage() {
             <Trash2 size={17} />
           </button>
         </div>
+        <div className="record-stamp" aria-label="Record status">
+          <span>Record ID</span>
+          <strong>{contact.id?.slice(0, 12).toUpperCase() || "PENDING"}</strong>
+          <em>● Active Record</em>
+        </div>
       </header>
 
       {error ? <div className="form-error">{error}</div> : null}
 
       <section className="summary-band">
         <div>
-          <span>Relationship</span>
+          <span>Relationship Type</span>
           <strong>{displayRelationship(contact)}</strong>
         </div>
         <div>
@@ -120,7 +127,7 @@ export default function ContactDetailPage() {
           <strong>{displayDate(contact.lastInteractionDate)}</strong>
         </div>
         <div>
-          <span>Strength</span>
+          <span>Relationship Strength</span>
           <StrengthMeter value={contact.relationshipStrength} />
         </div>
         <div>
@@ -311,7 +318,7 @@ function TagList({ values }: { values: string[] }) {
   );
 }
 
-function RelationshipSection({
+export function RelationshipSection({
   contact,
   contacts,
   relationships,
@@ -334,6 +341,8 @@ function RelationshipSection({
   });
   const [modalOpen, setModalOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const relationshipTriggerRef = useRef<HTMLButtonElement>(null);
+  const relationshipModalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!draft.targetContactId && otherContacts[0]?.id) {
@@ -343,11 +352,45 @@ function RelationshipSection({
 
   useEffect(() => {
     if (!modalOpen) return;
+
+    const modal = relationshipModalRef.current;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : relationshipTriggerRef.current;
+    modal?.querySelector<HTMLElement>("[data-modal-initial-focus]")?.focus();
+
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setModalOpen(false);
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setModalOpen(false);
+        return;
+      }
+
+      if (event.key !== "Tab" || !modal) return;
+      const focusable = Array.from(
+        modal.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), select:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+        )
+      );
+      if (!focusable.length) {
+        event.preventDefault();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     }
+
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      previousFocus?.focus();
+    };
   }, [modalOpen]);
 
   async function createRelationship(event: FormEvent) {
@@ -386,6 +429,7 @@ function RelationshipSection({
       {error && !modalOpen ? <div className="form-error">{error}</div> : null}
       <div className="section-toolbar">
         <button
+          ref={relationshipTriggerRef}
           className="secondary-button"
           disabled={!otherContacts.length}
           onClick={() => {
@@ -398,95 +442,116 @@ function RelationshipSection({
         </button>
       </div>
 
-      {modalOpen ? (
-        <div className="modal-backdrop" onMouseDown={() => setModalOpen(false)}>
-          <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="relationship-modal-title" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="modal-header">
-              <h2 id="relationship-modal-title">Add relationship</h2>
-              <button className="icon-button" onClick={() => setModalOpen(false)} aria-label="Close relationship modal" title="Close">
-                <X size={16} />
-              </button>
-            </div>
-            {error ? <div className="form-error">{error}</div> : null}
-            <form className="relationship-modal-form" onSubmit={createRelationship}>
-              <label>
-                Contact
-                <select
-                  value={draft.targetContactId}
-                  onChange={(event) => setDraft((current) => ({ ...current, targetContactId: event.target.value }))}
-                  required
-                >
-                  <option value="">Select contact</option>
-                  {otherContacts.map((candidate) => (
-                    <option key={candidate.id} value={candidate.id}>
-                      {candidate.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Relationship type
-                <select
-                  value={draft.relationshipType}
-                  onChange={(event) => setDraft((current) => ({ ...current, relationshipType: event.target.value }))}
-                >
-                  {relationshipOptions.map((option) => (
-                    <option key={option}>{option}</option>
-                  ))}
-                </select>
-              </label>
-              {draft.relationshipType === "Custom" ? (
-                <label className="full-span">
-                  Custom type
-                  <input
-                    value={draft.customRelationshipType}
-                    onChange={(event) => setDraft((current) => ({ ...current, customRelationshipType: event.target.value }))}
-                  />
-                </label>
-              ) : null}
-              <label className="compact-slider full-span">
-                <span>Strength {draft.relationshipStrength}</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={draft.relationshipStrength}
-                  onChange={(event) => setDraft((current) => ({ ...current, relationshipStrength: Number(event.target.value) }))}
-                />
-              </label>
-              <label>
-                Start date
-                <input
-                  type="date"
-                  value={draft.startDate}
-                  onChange={(event) => setDraft((current) => ({ ...current, startDate: event.target.value }))}
-                />
-              </label>
-              <label>
-                Last interaction
-                <input
-                  type="date"
-                  value={draft.lastInteractionDate}
-                  onChange={(event) => setDraft((current) => ({ ...current, lastInteractionDate: event.target.value }))}
-                />
-              </label>
-              <label className="full-span">
-                Notes
-                <input value={draft.notes} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} />
-              </label>
-              <div className="modal-actions">
-                <button className="secondary-button" type="button" onClick={() => setModalOpen(false)}>
-                  Cancel
-                </button>
-                <button className="primary-button" disabled={!otherContacts.length}>
-                  <UsersRound size={16} />
-                  Add
-                </button>
+      {modalOpen
+        ? createPortal(
+            <div className="modal-backdrop" onMouseDown={() => setModalOpen(false)}>
+              <div
+                ref={relationshipModalRef}
+                className="modal-panel"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="relationship-modal-title"
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <div className="modal-header">
+                  <h2 id="relationship-modal-title">Add relationship</h2>
+                  <button
+                    className="icon-button"
+                    onClick={() => setModalOpen(false)}
+                    aria-label="Close relationship modal"
+                    title="Close"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                {error ? <div className="form-error">{error}</div> : null}
+                <form className="relationship-modal-form" onSubmit={createRelationship}>
+                  <label>
+                    Contact
+                    <select
+                      data-modal-initial-focus
+                      value={draft.targetContactId}
+                      onChange={(event) => setDraft((current) => ({ ...current, targetContactId: event.target.value }))}
+                      required
+                    >
+                      <option value="">Select contact</option>
+                      {otherContacts.map((candidate) => (
+                        <option key={candidate.id} value={candidate.id}>
+                          {candidate.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Relationship type
+                    <select
+                      value={draft.relationshipType}
+                      onChange={(event) => setDraft((current) => ({ ...current, relationshipType: event.target.value }))}
+                    >
+                      {relationshipOptions.map((option) => (
+                        <option key={option}>{option}</option>
+                      ))}
+                    </select>
+                  </label>
+                  {draft.relationshipType === "Custom" ? (
+                    <label className="full-span">
+                      Custom type
+                      <input
+                        value={draft.customRelationshipType}
+                        onChange={(event) => setDraft((current) => ({ ...current, customRelationshipType: event.target.value }))}
+                      />
+                    </label>
+                  ) : null}
+                  <label className="compact-slider full-span">
+                    <span>Strength {draft.relationshipStrength}</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={draft.relationshipStrength}
+                      onChange={(event) =>
+                        setDraft((current) => ({ ...current, relationshipStrength: Number(event.target.value) }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Start date
+                    <input
+                      type="date"
+                      value={draft.startDate}
+                      onChange={(event) => setDraft((current) => ({ ...current, startDate: event.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    Last interaction
+                    <input
+                      type="date"
+                      value={draft.lastInteractionDate}
+                      onChange={(event) => setDraft((current) => ({ ...current, lastInteractionDate: event.target.value }))}
+                    />
+                  </label>
+                  <label className="full-span">
+                    Notes
+                    <input
+                      value={draft.notes}
+                      onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))}
+                    />
+                  </label>
+                  <div className="modal-actions">
+                    <button className="secondary-button" type="button" onClick={() => setModalOpen(false)}>
+                      Cancel
+                    </button>
+                    <button className="primary-button" disabled={!otherContacts.length}>
+                      <UsersRound size={16} />
+                      Add
+                    </button>
+                  </div>
+                </form>
               </div>
-            </form>
-          </div>
-        </div>
-      ) : null}
+            </div>,
+            document.body
+          )
+        : null}
 
       <div className="relationship-list">
         {relationships.map((relationship) => (
@@ -538,23 +603,35 @@ function RelationshipRow({
   if (editing) {
     return (
       <div className="relationship-row editing">
-        <strong>{otherName}</strong>
-        <select
-          value={draft.relationshipType}
-          onChange={(event) => setDraft((current) => ({ ...current, relationshipType: event.target.value }))}
-        >
-          {relationshipOptions.map((option) => (
-            <option key={option}>{option}</option>
-          ))}
-        </select>
+        <div className="relationship-edit-header">
+          <strong>{otherName}</strong>
+          <span>Editing relationship link</span>
+        </div>
+        <label className="relationship-edit-field">
+          <span>Relationship type</span>
+          <select
+            value={draft.relationshipType}
+            onChange={(event) => setDraft((current) => ({ ...current, relationshipType: event.target.value }))}
+          >
+            {relationshipOptions.map((option) => (
+              <option key={option}>{option}</option>
+            ))}
+          </select>
+        </label>
         {draft.relationshipType === "Custom" ? (
-          <input
-            value={draft.customRelationshipType}
-            onChange={(event) => setDraft((current) => ({ ...current, customRelationshipType: event.target.value }))}
-          />
+          <label className="relationship-edit-field">
+            <span>Custom type</span>
+            <input
+              value={draft.customRelationshipType}
+              onChange={(event) => setDraft((current) => ({ ...current, customRelationshipType: event.target.value }))}
+            />
+          </label>
         ) : null}
-        <label className="compact-slider">
-          <span>{draft.relationshipStrength}</span>
+        <label className="relationship-edit-field relationship-edit-strength">
+          <span>
+            Strength
+            <b>{draft.relationshipStrength}%</b>
+          </span>
           <input
             type="range"
             min="0"
@@ -563,19 +640,32 @@ function RelationshipRow({
             onChange={(event) => setDraft((current) => ({ ...current, relationshipStrength: Number(event.target.value) }))}
           />
         </label>
-        <input type="date" value={draft.startDate} onChange={(event) => setDraft((current) => ({ ...current, startDate: event.target.value }))} />
-        <input
-          type="date"
-          value={draft.lastInteractionDate}
-          onChange={(event) => setDraft((current) => ({ ...current, lastInteractionDate: event.target.value }))}
-        />
-        <input value={draft.notes} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} />
-        <button className="icon-button" onClick={save} aria-label="Save relationship" title="Save">
-          <Save size={16} />
-        </button>
-        <button className="icon-button" onClick={() => setEditing(false)} aria-label="Cancel" title="Cancel">
-          <X size={16} />
-        </button>
+        <label className="relationship-edit-field">
+          <span>Start date</span>
+          <input type="date" value={draft.startDate} onChange={(event) => setDraft((current) => ({ ...current, startDate: event.target.value }))} />
+        </label>
+        <label className="relationship-edit-field">
+          <span>Last interaction</span>
+          <input
+            type="date"
+            value={draft.lastInteractionDate}
+            onChange={(event) => setDraft((current) => ({ ...current, lastInteractionDate: event.target.value }))}
+          />
+        </label>
+        <label className="relationship-edit-field relationship-edit-notes">
+          <span>Notes</span>
+          <input value={draft.notes} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} />
+        </label>
+        <div className="relationship-edit-actions">
+          <button className="primary-button" onClick={save}>
+            <Save size={16} />
+            Save
+          </button>
+          <button className="secondary-button" onClick={() => setEditing(false)}>
+            <X size={16} />
+            Cancel
+          </button>
+        </div>
       </div>
     );
   }

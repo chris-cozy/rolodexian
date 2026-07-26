@@ -7,43 +7,51 @@ import StrengthMeter from "./StrengthMeter";
 
 interface ContactCardProps {
   contact: Contact;
+  index: number;
 }
 
-export default function ContactCard({ contact }: ContactCardProps) {
+export default function ContactCard({ contact, index }: ContactCardProps) {
   return (
     <article className="contact-card">
+      <div className="card-record-line" aria-hidden="true">
+        <span className="card-index">{String(index).padStart(2, "0")}</span>
+        <span className="record-status">ACTIVE</span>
+      </div>
       <Link to={`/contacts/${contact.id}`} className="contact-card-main">
-        <Avatar contact={contact} size="lg" />
+        <div className="contact-avatar-frame">
+          <Avatar contact={contact} size="lg" />
+          <span aria-hidden="true" />
+        </div>
         <div className="contact-card-copy">
-          <h2>{contact.name}</h2>
-          <p>{contact.nicknames.length ? contact.nicknames.join(", ") : displayRelationship(contact)}</p>
+          <h2 title={contact.name}>{contact.name}</h2>
+          <p>{displayRelationship(contact)}</p>
+          <div className="contact-card-meta">
+            <div className="meta-line">
+              <UserRound size={15} />
+              <div>
+                <small>Aliases</small>
+                <strong>{contact.nicknames.length ? contact.nicknames.join(", ") : "—"}</strong>
+              </div>
+            </div>
+            <div className="meta-line">
+              <CalendarDays size={15} />
+              <div>
+                <small>Last contact</small>
+                <strong>{displayDate(contact.lastInteractionDate)}</strong>
+              </div>
+            </div>
+            <div className="meta-line">
+              <Network size={15} />
+              <div>
+                <small>Social count</small>
+                <strong>{String(contact.socialAccounts.length).padStart(2, "0")}</strong>
+              </div>
+            </div>
+          </div>
         </div>
       </Link>
-      <div className="contact-card-meta">
-        <div className="meta-line">
-          <UserRound size={15} />
-          <div>
-            <small>Relationship</small>
-            <strong>{displayRelationship(contact)}</strong>
-          </div>
-        </div>
-        <div className="meta-line">
-          <CalendarDays size={15} />
-          <div>
-            <small>Last interaction date</small>
-            <strong>{displayDate(contact.lastInteractionDate)}</strong>
-          </div>
-        </div>
-        <div className="meta-line">
-          <Network size={15} />
-          <div>
-            <small>Social accounts</small>
-            <strong>{contact.socialAccounts.length} socials</strong>
-          </div>
-        </div>
-      </div>
       <div className="contact-card-strength">
-        <span>Relationship strength score</span>
+        <span>Relationship strength</span>
         <StrengthMeter value={contact.relationshipStrength} label="Relationship strength score" />
       </div>
       <div className="card-actions">

@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { Navigate, RouterProvider, createBrowserRouter } from "react-router-dom";
 import App from "./App";
 import ContactsPage from "./pages/ContactsPage";
-import ContactDetailPage from "./pages/ContactDetailPage";
+import ContactDossierPage from "./pages/ContactDossierPage";
 import ContactEditPage from "./pages/ContactEditPage";
 import GraphPage from "./pages/GraphPage";
 import "./styles.css";
@@ -15,7 +15,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <ContactsPage /> },
       { path: "contacts/new", element: <ContactEditPage /> },
-      { path: "contacts/:id", element: <ContactDetailPage /> },
+      { path: "contacts/:id", element: <ContactDossierPage /> },
       { path: "contacts/:id/edit", element: <ContactEditPage /> },
       { path: "graph", element: <GraphPage /> },
       { path: "*", element: <Navigate to="/" replace /> }

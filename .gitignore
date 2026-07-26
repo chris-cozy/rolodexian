@@ -46,3 +46,5 @@ Desktop.ini
 tmp/
 temp/
 .cache/
+.playwright-cli/
+output/playwright/
