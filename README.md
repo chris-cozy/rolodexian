@@ -6,7 +6,7 @@ Rolodexian is a local-first personal network app for managing contact profiles, 
 
 - Create, view, edit, search, and delete contacts.
 - Store aliases, social accounts, birthdates, appearance notes, traits, preferences, summaries, custom fields, and interaction events.
-- Track each contact's relationship to you, relationship strength, notes, important dates, and last interaction date.
+- Track each contact's relationship to you, relationship strength, notes, important dates, and a latest interaction date derived from the interaction log.
 - Create and edit relationships between contacts.
 - Upload profile images and additional related images.
 - View an interactive graph with you at the center, contacts around you, and contact-to-contact relationship edges.
@@ -127,6 +127,11 @@ Rolodexian uses SQLite with these main tables:
 - `relationships`
 
 Flexible fields such as nicknames, appearance, traits, preferences, important dates, and custom fields are stored as JSON so new attributes can be added later without reshaping the whole app.
+
+Contact exports use archive version 2, with `favoriteColors` arrays and structured
+important dates (`date` plus `description`). Imports remain compatible with
+version-1 archives; singular favorite colors and free-form date strings are
+normalized when they are read.
 
 ## Privacy
 

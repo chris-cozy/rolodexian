@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import Avatar from "../components/Avatar";
 import StrengthMeter from "../components/StrengthMeter";
 import { api } from "../lib/api";
-import { displayDate, displayRelationship } from "../lib/contact";
+import { displayDate, displayRelationship, sortImportantDates } from "../lib/contact";
 import type { Contact, Relationship, UploadedImage } from "../types";
 import { RelationshipSection } from "./ContactDetailPage";
 
@@ -17,6 +17,7 @@ export default function ContactDossierPage() {
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [showAllInteractions, setShowAllInteractions] = useState(false);
+  const [showAllImportantDates, setShowAllImportantDates] = useState(false);
   const profileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
@@ -82,7 +83,8 @@ export default function ContactDossierPage() {
   const recentImages = [profileImage, ...supportingImages].filter((image): image is UploadedImage => Boolean(image)).slice(0, 6);
   const vectorRelationships = relatedRelationships.slice(0, 3);
   const visibleInteractions = showAllInteractions ? contact.interactions : contact.interactions.slice(0, 4);
-  const traits = [...new Set([...contact.traits, ...(contact.preferences.interests || [])])];
+  const orderedImportantDates = sortImportantDates(contact.importantDates);
+  const visibleImportantDates = showAllImportantDates ? orderedImportantDates : orderedImportantDates.slice(0, 4);
   const nameParts = contact.name.split(" ");
 
   return (
@@ -125,6 +127,7 @@ export default function ContactDossierPage() {
           <dl className="ident-readout">
             <div><dt>Relationship Type</dt><dd>{displayRelationship(contact)}</dd></div>
             <div><dt>Alias(es)</dt><dd>{contact.nicknames.join(", ") || "None logged"}</dd></div>
+            <div><dt>Birthdate</dt><dd>{displayDate(contact.birthdate)}</dd></div>
           </dl>
           <div className="ident-strength">
             <span>Relationship Strength</span>
@@ -144,7 +147,7 @@ export default function ContactDossierPage() {
             <p>{contact.summary || "No summary."}</p>
             {contact.selfRelationshipNotes ? <p>{contact.selfRelationshipNotes}</p> : null}
             <div className="summary-telemetry">
-              <span>Last Interaction<strong>{displayDate(contact.lastInteractionDate)}</strong></span>
+              <span>Latest Interaction<strong>{displayDate(contact.lastInteractionDate)}</strong></span>
               <span>Social Count<strong>{String(contact.socialAccounts.length).padStart(3, "0")}</strong></span>
             </div>
           </section>
@@ -175,6 +178,34 @@ export default function ContactDossierPage() {
             ) : <p className="muted">No interaction events.</p>}
           </section>
 
+          <section className="console-panel dossier-important-dates">
+            <div className="panel-title-row">
+              <h2>Important Dates</h2>
+              {orderedImportantDates.length > 4 ? (
+                <button className="secondary-button" type="button" onClick={() => setShowAllImportantDates(current => !current)}>
+                  {showAllImportantDates ? "Condense" : "View All"}
+                </button>
+              ) : null}
+            </div>
+            {orderedImportantDates.length ? (
+              <div className="timeline important-dates-timeline">
+                {visibleImportantDates.map((importantDate, index) => (
+                  <div
+                    className={`timeline-item important-date-item${importantDate.date ? "" : " is-undated"}`}
+                    key={`${importantDate.date}-${importantDate.description}-${index}`}
+                  >
+                    <CalendarDays size={15} />
+                    <div>
+                      <span>{importantDate.date ? displayDate(importantDate.date) : "Date needed"}</span>
+                      <strong>{importantDate.description || "Important date"}</strong>
+                      {!importantDate.date ? <p>Preserved legacy entry — add a date to schedule it.</p> : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="muted">No important dates logged.</p>}
+          </section>
+
           <section className="console-panel dossier-social">
             <h2>Social Accounts</h2>
             <div className="social-table" role="table" aria-label="Social accounts">
@@ -197,10 +228,16 @@ export default function ContactDossierPage() {
             </div>
           </section>
 
-          <section className="console-panel dossier-traits">
-            <h2>Interests & Traits</h2>
-            <TagList values={traits} />
-          </section>
+          <div className="dossier-attribute-sections">
+            <section className="console-panel dossier-traits">
+              <h2>Interests</h2>
+              <TagList values={contact.preferences.interests || []} emptyMessage="No interests logged." />
+            </section>
+            <section className="console-panel dossier-traits">
+              <h2>Traits</h2>
+              <TagList values={contact.traits} emptyMessage="No traits logged." />
+            </section>
+          </div>
 
         </main>
 
@@ -253,7 +290,6 @@ export default function ContactDossierPage() {
             {Object.entries(contact.customFields).length ? (
               Object.entries(contact.customFields).slice(0, 4).map(([key, value]) => <Definition key={key} label={key} value={value} />)
             ) : <p className="muted">No custom fields.</p>}
-            <Definition label="Birthdate" value={displayDate(contact.birthdate)} />
           </section>
         </aside>
       </div>
@@ -280,7 +316,7 @@ export default function ContactDossierPage() {
             </section>
             <section className="info-section">
               <h2>Preferences</h2>
-              <Definition label="Favorite color" value={contact.preferences.favoriteColor} />
+              <Definition label="Favorite Colors" value={contact.preferences.favoriteColors?.join(", ")} />
               <Definition label="Favorite foods" value={contact.preferences.favoriteFoods?.join(", ")} />
               <Definition label="Likes" value={contact.preferences.likes?.join(", ")} />
               <Definition label="Dislikes" value={contact.preferences.dislikes?.join(", ")} />
@@ -288,10 +324,11 @@ export default function ContactDossierPage() {
             </section>
             <section className="info-section">
               <h2>Record Notes</h2>
-              <Definition label="Important dates" value={contact.importantDates?.join(" · ")} />
-              <Definition label="Relationship notes" value={contact.selfRelationshipNotes} />
-              <Definition label="Aliases" value={contact.nicknames.join(", ")} />
-              <Definition label="Birthdate" value={displayDate(contact.birthdate)} />
+              {contact.selfRelationshipNotes ? (
+                <Definition label="Relationship notes" value={contact.selfRelationshipNotes} />
+              ) : (
+                <p className="muted">No relationship notes.</p>
+              )}
             </section>
           </div>
         </div>
@@ -314,7 +351,7 @@ function Definition({ label, value }: { label: string; value?: string | null }) 
   return <div className="definition-row"><span>{label}</span><strong>{value}</strong></div>;
 }
 
-function TagList({ values }: { values: string[] }) {
-  if (!values.length) return <p className="muted">No traits logged.</p>;
-  return <div className="tag-list">{values.slice(0, 9).map((value) => <span key={value}>{value}</span>)}</div>;
+function TagList({ values, emptyMessage }: { values: string[]; emptyMessage: string }) {
+  if (!values.length) return <p className="muted">{emptyMessage}</p>;
+  return <div className="tag-list">{values.map((value) => <span key={value}>{value}</span>)}</div>;
 }

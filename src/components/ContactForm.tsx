@@ -2,14 +2,12 @@ import { Plus, Save, Trash2 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   formatKeyValueLines,
-  formatLines,
-  formatList,
   parseKeyValueLines,
-  parseLines,
-  parseList,
   relationshipOptions
 } from "../lib/contact";
 import type { Contact, InteractionEvent, SocialAccount } from "../types";
+import ImportantDatesEditor from "./ImportantDatesEditor";
+import MultiValueInput from "./MultiValueInput";
 
 interface ContactFormProps {
   initialContact: Contact;
@@ -104,13 +102,11 @@ export default function ContactForm({ initialContact, onSubmit, onChange, submit
               required
             />
           </label>
-          <label>
-            Nicknames
-            <input
-              value={formatList(contact.nicknames)}
-              onChange={(event) => patchContact({ nicknames: parseList(event.target.value) })}
-            />
-          </label>
+          <MultiValueInput
+            label="Nicknames"
+            values={contact.nicknames}
+            onChange={(nicknames) => patchContact({ nicknames })}
+          />
           <label>
             Birthdate
             <input
@@ -139,14 +135,6 @@ export default function ContactForm({ initialContact, onSubmit, onChange, submit
               />
             </label>
           ) : null}
-          <label>
-            Last interaction
-            <input
-              type="date"
-              value={contact.lastInteractionDate || ""}
-              onChange={(event) => patchContact({ lastInteractionDate: event.target.value })}
-            />
-          </label>
             </div>
             <label className="slider-field">
               Relationship strength
@@ -301,41 +289,31 @@ export default function ContactForm({ initialContact, onSubmit, onChange, submit
           <h2>Preferences</h2>
         </div>
         <div className="form-grid">
-          <label>
-            Favorite color
-            <input
-              value={contact.preferences.favoriteColor || ""}
-              onChange={(event) => patchPreferences("favoriteColor", event.target.value)}
-            />
-          </label>
-          <label>
-            Favorite foods
-            <input
-              value={formatList(contact.preferences.favoriteFoods)}
-              onChange={(event) => patchPreferences("favoriteFoods", parseList(event.target.value))}
-            />
-          </label>
-          <label>
-            Interests
-            <input
-              value={formatList(contact.preferences.interests)}
-              onChange={(event) => patchPreferences("interests", parseList(event.target.value))}
-            />
-          </label>
-          <label>
-            Likes
-            <input
-              value={formatList(contact.preferences.likes)}
-              onChange={(event) => patchPreferences("likes", parseList(event.target.value))}
-            />
-          </label>
-          <label>
-            Dislikes
-            <input
-              value={formatList(contact.preferences.dislikes)}
-              onChange={(event) => patchPreferences("dislikes", parseList(event.target.value))}
-            />
-          </label>
+          <MultiValueInput
+            label="Favorite Colors"
+            values={contact.preferences.favoriteColors || []}
+            onChange={(favoriteColors) => patchPreferences("favoriteColors", favoriteColors)}
+          />
+          <MultiValueInput
+            label="Favorite foods"
+            values={contact.preferences.favoriteFoods || []}
+            onChange={(favoriteFoods) => patchPreferences("favoriteFoods", favoriteFoods)}
+          />
+          <MultiValueInput
+            label="Interests"
+            values={contact.preferences.interests || []}
+            onChange={(interests) => patchPreferences("interests", interests)}
+          />
+          <MultiValueInput
+            label="Likes"
+            values={contact.preferences.likes || []}
+            onChange={(likes) => patchPreferences("likes", likes)}
+          />
+          <MultiValueInput
+            label="Dislikes"
+            values={contact.preferences.dislikes || []}
+            onChange={(dislikes) => patchPreferences("dislikes", dislikes)}
+          />
         </div>
         <label>
           Other preferences
@@ -348,18 +326,16 @@ export default function ContactForm({ initialContact, onSubmit, onChange, submit
           <h2>Notes</h2>
         </div>
         <div className="form-grid">
-          <label>
-            Traits
-            <input value={formatList(contact.traits)} onChange={(event) => patchContact({ traits: parseList(event.target.value) })} />
-          </label>
-        </div>
-        <label>
-          Important dates
-          <textarea
-            value={formatLines(contact.importantDates)}
-            onChange={(event) => patchContact({ importantDates: parseLines(event.target.value) })}
+          <MultiValueInput
+            label="Traits"
+            values={contact.traits}
+            onChange={(traits) => patchContact({ traits })}
           />
-        </label>
+        </div>
+        <ImportantDatesEditor
+          values={contact.importantDates}
+          onChange={(importantDates) => patchContact({ importantDates })}
+        />
         <label>
           Summary
           <textarea value={contact.summary || ""} onChange={(event) => patchContact({ summary: event.target.value })} />

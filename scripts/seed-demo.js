@@ -12,7 +12,10 @@ const contacts = [
     relationshipStrength: 91,
     lastInteractionDate: "2026-06-22",
     selfRelationshipNotes: "Close friend from the neighborhood dinner group.",
-    importantDates: ["2021-09-18 - Met at Ana's rooftop dinner", "2026-04-12 - Birthday"],
+    importantDates: [
+      { date: "2021-09-18", description: "Met at Ana's rooftop dinner" },
+      { date: "2026-04-12", description: "Birthday" }
+    ],
     appearance: {
       race: "East Asian",
       sex: "Female",
@@ -21,7 +24,7 @@ const contacts = [
     },
     traits: ["thoughtful", "dry humor", "planner"],
     preferences: {
-      favoriteColor: "Olive green",
+      favoriteColors: ["Olive green"],
       favoriteFoods: ["ramen", "mango sticky rice", "jasmine tea ice cream"],
       interests: ["urban gardening", "indie films", "ceramics"],
       likes: ["quiet cafes", "handwritten notes"],
@@ -50,7 +53,10 @@ const contacts = [
     relationshipStrength: 96,
     lastInteractionDate: "2026-06-25",
     selfRelationshipNotes: "Primary partner. High-priority relationship and frequent interactions.",
-    importantDates: ["2024-02-14 - First date", "2026-11-03 - Birthday"],
+    importantDates: [
+      { date: "2024-02-14", description: "First date" },
+      { date: "2026-11-03", description: "Birthday" }
+    ],
     appearance: {
       race: "Black",
       sex: "Male",
@@ -59,7 +65,7 @@ const contacts = [
     },
     traits: ["generous", "direct", "music nerd"],
     preferences: {
-      favoriteColor: "Deep teal",
+      favoriteColors: ["Deep teal"],
       favoriteFoods: ["jerk chicken", "lemon tart", "pistachio gelato"],
       interests: ["vinyl records", "bike rides", "documentaries"],
       likes: ["early plans", "window seats"],
@@ -87,7 +93,10 @@ const contacts = [
     relationshipStrength: 88,
     lastInteractionDate: "2026-06-10",
     selfRelationshipNotes: "Cousin who is also the family calendar anchor.",
-    importantDates: ["2026-08-29 - Birthday", "2026-12-24 - Family dinner"],
+    importantDates: [
+      { date: "2026-08-29", description: "Birthday" },
+      { date: "2026-12-24", description: "Family dinner" }
+    ],
     appearance: {
       race: "Latina",
       sex: "Female",
@@ -96,7 +105,7 @@ const contacts = [
     },
     traits: ["protective", "organized", "storyteller"],
     preferences: {
-      favoriteColor: "Marigold",
+      favoriteColors: ["Marigold"],
       favoriteFoods: ["tamales", "flan", "strawberry ice cream"],
       interests: ["family history", "salsa nights"],
       likes: ["voice notes", "photo albums"],
@@ -123,7 +132,7 @@ const contacts = [
     relationshipStrength: 64,
     lastInteractionDate: "2026-05-29",
     selfRelationshipNotes: "Former project partner. Good person to check in with before major launches.",
-    importantDates: ["2023-03-06 - Started Orion project"],
+    importantDates: [{ date: "2023-03-06", description: "Started Orion project" }],
     appearance: {
       race: "White",
       sex: "Male",
@@ -132,7 +141,7 @@ const contacts = [
     },
     traits: ["analytical", "reserved", "reliable"],
     preferences: {
-      favoriteColor: "Slate green",
+      favoriteColors: ["Slate green"],
       favoriteFoods: ["pho", "salted caramel", "black coffee"],
       interests: ["systems design", "trail running"],
       likes: ["clear agendas", "short meetings"],
@@ -159,7 +168,7 @@ const contacts = [
     relationshipStrength: 79,
     lastInteractionDate: "2026-06-18",
     selfRelationshipNotes: "Friend from the ceramics studio. Often coordinates small group outings.",
-    importantDates: ["2026-01-23 - Birthday"],
+    importantDates: [{ date: "2026-01-23", description: "Birthday" }],
     appearance: {
       race: "South Asian",
       sex: "Female",
@@ -168,7 +177,7 @@ const contacts = [
     },
     traits: ["curious", "high energy", "connector"],
     preferences: {
-      favoriteColor: "Cobalt",
+      favoriteColors: ["Cobalt"],
       favoriteFoods: ["chana masala", "brownies", "mint chip"],
       interests: ["ceramics", "live comedy", "book clubs"],
       likes: ["spontaneous walks", "good stationery"],
@@ -197,7 +206,7 @@ const contacts = [
     relationshipStrength: 58,
     lastInteractionDate: "2026-04-27",
     selfRelationshipNotes: "Friendly connection mostly through climbing gym sessions.",
-    importantDates: ["2022-10-02 - First climbing session"],
+    importantDates: [{ date: "2022-10-02", description: "First climbing session" }],
     appearance: {
       race: "Korean American",
       sex: "Nonbinary",
@@ -206,7 +215,7 @@ const contacts = [
     },
     traits: ["steady", "encouraging", "low-key"],
     preferences: {
-      favoriteColor: "Forest green",
+      favoriteColors: ["Forest green"],
       favoriteFoods: ["bibimbap", "matcha soft serve"],
       interests: ["bouldering", "film photography"],
       likes: ["gear talk", "quiet hangs"],
@@ -233,7 +242,10 @@ const contacts = [
     relationshipStrength: 72,
     lastInteractionDate: "2026-03-12",
     selfRelationshipNotes: "Younger cousin. Best reached by text.",
-    importantDates: ["2026-05-14 - Birthday", "2026-09-01 - Semester starts"],
+    importantDates: [
+      { date: "2026-05-14", description: "Birthday" },
+      { date: "2026-09-01", description: "Semester starts" }
+    ],
     appearance: {
       race: "South Asian",
       sex: "Female",
@@ -242,7 +254,7 @@ const contacts = [
     },
     traits: ["observant", "creative", "reserved"],
     preferences: {
-      favoriteColor: "Lavender",
+      favoriteColors: ["Lavender"],
       favoriteFoods: ["sushi", "cheesecake", "black sesame ice cream"],
       interests: ["illustration", "anime", "environmental science"],
       likes: ["bookstore gift cards", "tea"],
@@ -269,7 +281,7 @@ const contacts = [
     relationshipStrength: 34,
     lastInteractionDate: "2025-11-08",
     selfRelationshipNotes: "Knows Marcus and sometimes appears at group events.",
-    importantDates: ["2025-11-08 - Last group hang"],
+    importantDates: [{ date: "2025-11-08", description: "Last group hang" }],
     appearance: {
       race: "White",
       sex: "Male",
@@ -278,7 +290,7 @@ const contacts = [
     },
     traits: ["witty", "sporadic", "private"],
     preferences: {
-      favoriteColor: "Black",
+      favoriteColors: ["Black"],
       favoriteFoods: ["pizza", "espresso", "vanilla custard"],
       interests: ["street photography", "punk shows"],
       likes: ["small venues", "old cameras"],
@@ -299,13 +311,13 @@ const contacts = [
 ];
 
 const relationships = [
-  ["maya", "priya", "Friend", 88, "Ceramics studio friends.", "2024-05-01", "2026-06-18"],
-  ["maya", "marcus", "Friend", 76, "Know each other through group dinners.", "2024-03-02", "2026-06-22"],
-  ["marcus", "jordan", "Friend", 60, "Concert friends with occasional check-ins.", "2022-08-12", "2025-11-08"],
-  ["sofia", "nora", "Family", 84, "Cousins who coordinate family updates.", "2000-05-14", "2026-03-12"],
-  ["theo", "alex", "Coworker", 62, "Met through work and climb together.", "2023-04-19", "2026-04-27"],
-  ["theo", "maya", "Acquaintance", 35, "Met at one dinner.", "2025-12-05", "2025-12-05"],
-  ["priya", "alex", "Acquaintance", 48, "Both attend the same climbing gym occasionally.", "2025-09-10", "2026-01-20"]
+  ["maya", "priya", "Friend", 88, "Ceramics studio friends.", "2024-05-01"],
+  ["maya", "marcus", "Friend", 76, "Know each other through group dinners.", "2024-03-02"],
+  ["marcus", "jordan", "Friend", 60, "Concert friends with occasional check-ins.", "2022-08-12"],
+  ["sofia", "nora", "Family", 84, "Cousins who coordinate family updates.", "2000-05-14"],
+  ["theo", "alex", "Coworker", 62, "Met through work and climb together.", "2023-04-19"],
+  ["theo", "maya", "Acquaintance", 35, "Met at one dinner.", "2025-12-05"],
+  ["priya", "alex", "Acquaintance", 48, "Both attend the same climbing gym occasionally.", "2025-09-10"]
 ];
 
 async function request(path, options = {}) {
@@ -392,7 +404,7 @@ async function seed() {
     await uploadSvg(createdContact.id, "additional", `${key}-${extraImage.toLowerCase()}.svg`, svgScene(extraImage, colors));
   }
 
-  for (const [sourceKey, targetKey, relationshipType, relationshipStrength, notes, startDate, lastInteractionDate] of relationships) {
+  for (const [sourceKey, targetKey, relationshipType, relationshipStrength, notes, startDate] of relationships) {
     await request("/api/relationships", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -402,8 +414,7 @@ async function seed() {
         relationshipType,
         relationshipStrength,
         notes,
-        startDate,
-        lastInteractionDate
+        startDate
       })
     });
   }

@@ -81,7 +81,6 @@ export default function ContactEditPage() {
     const checks = [
       previewContact.name,
       previewContact.relationshipType,
-      previewContact.lastInteractionDate,
       previewContact.summary,
       previewContact.nicknames.length,
       previewContact.traits.length,

@@ -1,4 +1,4 @@
-import type { Contact } from "../types";
+import type { Contact, ImportantDate } from "../types";
 
 export const relationshipOptions = [
   "Friend",
@@ -17,7 +17,6 @@ export function emptyContact(): Contact {
     relationshipType: "Acquaintance",
     customRelationshipType: "",
     relationshipStrength: 50,
-    lastInteractionDate: "",
     selfRelationshipNotes: "",
     importantDates: [],
     appearance: {
@@ -28,7 +27,7 @@ export function emptyContact(): Contact {
     },
     traits: [],
     preferences: {
-      favoriteColor: "",
+      favoriteColors: [],
       favoriteFoods: [],
       interests: [],
       likes: [],
@@ -104,6 +103,29 @@ export function displayDate(value?: string | null): string {
     day: "numeric",
     year: "numeric"
   }).format(date);
+}
+
+export function localDateKey(value = new Date()): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function sortImportantDates(values: ImportantDate[], today = localDateKey()): ImportantDate[] {
+  return values
+    .map((value, index) => ({ value, index }))
+    .sort((left, right) => {
+      const leftDate = left.value.date;
+      const rightDate = right.value.date;
+      const leftGroup = !leftDate ? 2 : leftDate >= today ? 0 : 1;
+      const rightGroup = !rightDate ? 2 : rightDate >= today ? 0 : 1;
+      if (leftGroup !== rightGroup) return leftGroup - rightGroup;
+      if (leftGroup === 0 && leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+      if (leftGroup === 1 && leftDate !== rightDate) return rightDate.localeCompare(leftDate);
+      return left.index - right.index;
+    })
+    .map(({ value }) => value);
 }
 
 export function initials(name: string): string {

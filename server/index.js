@@ -7,6 +7,8 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import multer from "multer";
+import { normalizeImportantDates, normalizePreferences } from "./contact-data.js";
+import { latestInteractionDate } from "./interaction-date.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -18,7 +20,8 @@ const isProduction = process.env.NODE_ENV === "production";
 const distDir = path.join(rootDir, "dist");
 const devWebUrl = process.env.DEV_WEB_URL || "http://localhost:5173";
 const archiveFormat = "rolodexian.contacts-export";
-const archiveVersion = 1;
+const archiveVersion = 2;
+const supportedArchiveVersions = new Set([1, 2]);
 
 fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -183,12 +186,11 @@ function normalizeContactInput(body) {
     relationshipType: optionalText(body.relationshipType) || "Acquaintance",
     customRelationshipType: optionalText(body.customRelationshipType),
     relationshipStrength: clampStrength(body.relationshipStrength),
-    lastInteractionDate: optionalText(body.lastInteractionDate),
     selfRelationshipNotes: optionalText(body.selfRelationshipNotes),
-    importantDates: Array.isArray(body.importantDates) ? body.importantDates : [],
+    importantDates: normalizeImportantDates(body.importantDates),
     appearance: body.appearance && typeof body.appearance === "object" ? body.appearance : {},
     traits: stringList(body.traits),
-    preferences: body.preferences && typeof body.preferences === "object" ? body.preferences : {},
+    preferences: normalizePreferences(body.preferences),
     summary: optionalText(body.summary),
     customFields: body.customFields && typeof body.customFields === "object" ? body.customFields : {},
     socialAccounts: Array.isArray(body.socialAccounts) ? body.socialAccounts : [],
@@ -312,6 +314,7 @@ function normalizeArchiveContact(rawContact, index) {
   return {
     ...input,
     id,
+    lastInteractionDate: optionalText(rawContact.lastInteractionDate),
     profileImageId,
     images,
     createdAt: optionalText(rawContact.createdAt),
@@ -330,6 +333,7 @@ function normalizeArchiveRelationship(rawRelationship, index, availableContactId
   const relationship = {
     ...input,
     id: requiredText(rawRelationship.id, `${fieldName}.id`),
+    lastInteractionDate: optionalText(rawRelationship.lastInteractionDate),
     createdAt: optionalText(rawRelationship.createdAt),
     updatedAt: optionalText(rawRelationship.updatedAt)
   };
@@ -354,7 +358,7 @@ function parseArchive(buffer) {
   }
 
   if (!plainObject(archive)) throw badRequest("Import file must contain an archive object.");
-  if (archive.format !== archiveFormat || archive.version !== archiveVersion) {
+  if (archive.format !== archiveFormat || !supportedArchiveVersions.has(archive.version)) {
     throw badRequest("Import file is not a supported Rolodexian contacts archive.");
   }
   if (!Array.isArray(archive.contacts)) throw badRequest("Archive contacts must be an array.");
@@ -403,10 +407,10 @@ function mapContact(row) {
     relationshipStrength: row.relationship_strength,
     lastInteractionDate: row.last_interaction_date,
     selfRelationshipNotes: row.self_relationship_notes,
-    importantDates: parseJson(row.important_dates, []),
+    importantDates: normalizeImportantDates(parseJson(row.important_dates, [])),
     appearance: parseJson(row.appearance, {}),
     traits: parseJson(row.traits, []),
-    preferences: parseJson(row.preferences, {}),
+    preferences: normalizePreferences(parseJson(row.preferences, {})),
     summary: row.summary,
     customFields: parseJson(row.custom_fields, {}),
     profileImageId: row.profile_image_id,
@@ -443,6 +447,7 @@ function getFullContact(id) {
     occurredOn: event.occurred_on,
     notes: event.notes
   }));
+  contact.lastInteractionDate = latestInteractionDate(contact.interactions, contact.lastInteractionDate);
   contact.images = imageSelect.all(id).map(mapImage);
   contact.profileImage = contact.images.find((image) => image.id === contact.profileImageId) || null;
   return contact;
@@ -503,7 +508,7 @@ const createContactTx = db.transaction((input) => {
     )
     VALUES (
       @id, @name, @nicknames, @birthdate, @relationshipType, @customRelationshipType,
-      @relationshipStrength, @lastInteractionDate, @selfRelationshipNotes, @importantDates,
+      @relationshipStrength, NULL, @selfRelationshipNotes, @importantDates,
       @appearance, @traits, @preferences, @summary, @customFields, @createdAt, @updatedAt
     )
   `).run({
@@ -514,7 +519,6 @@ const createContactTx = db.transaction((input) => {
     relationshipType: input.relationshipType,
     customRelationshipType: input.customRelationshipType,
     relationshipStrength: input.relationshipStrength,
-    lastInteractionDate: input.lastInteractionDate,
     selfRelationshipNotes: input.selfRelationshipNotes,
     importantDates: jsonString(input.importantDates, []),
     appearance: jsonString(input.appearance, {}),
@@ -539,7 +543,6 @@ const updateContactTx = db.transaction((id, input) => {
       relationship_type = @relationshipType,
       custom_relationship_type = @customRelationshipType,
       relationship_strength = @relationshipStrength,
-      last_interaction_date = @lastInteractionDate,
       self_relationship_notes = @selfRelationshipNotes,
       important_dates = @importantDates,
       appearance = @appearance,
@@ -557,7 +560,6 @@ const updateContactTx = db.transaction((id, input) => {
     relationshipType: input.relationshipType,
     customRelationshipType: input.customRelationshipType,
     relationshipStrength: input.relationshipStrength,
-    lastInteractionDate: input.lastInteractionDate,
     selfRelationshipNotes: input.selfRelationshipNotes,
     importantDates: jsonString(input.importantDates, []),
     appearance: jsonString(input.appearance, {}),
@@ -808,8 +810,7 @@ function normalizeRelationshipInput(body) {
     customRelationshipType: optionalText(body.customRelationshipType),
     relationshipStrength: clampStrength(body.relationshipStrength),
     notes: optionalText(body.notes),
-    startDate: optionalText(body.startDate),
-    lastInteractionDate: optionalText(body.lastInteractionDate)
+    startDate: optionalText(body.startDate)
   };
 }
 
@@ -1049,7 +1050,7 @@ app.post("/api/relationships", (req, res) => {
     )
     VALUES (
       @id, @sourceContactId, @targetContactId, @relationshipType, @customRelationshipType,
-      @relationshipStrength, @notes, @startDate, @lastInteractionDate, @createdAt, @updatedAt
+      @relationshipStrength, @notes, @startDate, NULL, @createdAt, @updatedAt
     )
   `).run({
     id,
@@ -1076,7 +1077,6 @@ app.put("/api/relationships/:id", (req, res) => {
       relationship_strength = @relationshipStrength,
       notes = @notes,
       start_date = @startDate,
-      last_interaction_date = @lastInteractionDate,
       updated_at = @updatedAt
     WHERE id = @id
   `).run({
@@ -1135,8 +1135,7 @@ app.get("/api/graph", (_req, res) => {
       type: relationship.relationshipType,
       label: relationship.relationshipLabel,
       manualStrength: relationship.relationshipStrength,
-      strength: suggestedStrength(relationship.relationshipStrength, relationship.lastInteractionDate, 0.15),
-      lastInteractionDate: relationship.lastInteractionDate
+      strength: relationship.relationshipStrength
     }))
   ];
 

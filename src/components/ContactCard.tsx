@@ -36,7 +36,7 @@ export default function ContactCard({ contact, index }: ContactCardProps) {
             <div className="meta-line">
               <CalendarDays size={15} />
               <div>
-                <small>Last contact</small>
+                <small>Latest interaction</small>
                 <strong>{displayDate(contact.lastInteractionDate)}</strong>
               </div>
             </div>

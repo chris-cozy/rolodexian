@@ -123,7 +123,7 @@ export default function ContactDetailPage() {
           <strong>{displayRelationship(contact)}</strong>
         </div>
         <div>
-          <span>Last interaction</span>
+          <span>Latest interaction</span>
           <strong>{displayDate(contact.lastInteractionDate)}</strong>
         </div>
         <div>
@@ -209,7 +209,7 @@ export default function ContactDetailPage() {
             </InfoSection>
 
             <InfoSection title="Preferences">
-              <Definition label="Favorite color" value={contact.preferences.favoriteColor} />
+              <Definition label="Favorite Colors" value={contact.preferences.favoriteColors?.join(", ")} />
               <Definition label="Favorite foods" value={contact.preferences.favoriteFoods?.join(", ")} />
               <Definition label="Interests" value={contact.preferences.interests?.join(", ")} />
               <Definition label="Likes" value={contact.preferences.likes?.join(", ")} />
@@ -281,7 +281,17 @@ export default function ContactDetailPage() {
             ) : (
               <p className="muted">No custom fields.</p>
             )}
-            <TagList values={contact.importantDates} />
+          </InfoSection>
+          <InfoSection title="Important Dates">
+            {contact.importantDates.length ? (
+              contact.importantDates.map((importantDate, index) => (
+                <Definition
+                  key={`${importantDate.date}-${importantDate.description}-${index}`}
+                  label={importantDate.date ? displayDate(importantDate.date) : "Date needed"}
+                  value={importantDate.description || "Important date"}
+                />
+              ))
+            ) : <p className="muted">No important dates logged.</p>}
           </InfoSection>
         </aside>
       </div>
@@ -336,8 +346,7 @@ export function RelationshipSection({
     customRelationshipType: "",
     relationshipStrength: 50,
     notes: "",
-    startDate: "",
-    lastInteractionDate: ""
+    startDate: ""
   });
   const [modalOpen, setModalOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -405,8 +414,7 @@ export function RelationshipSection({
         customRelationshipType: draft.customRelationshipType,
         relationshipStrength: draft.relationshipStrength,
         notes: draft.notes,
-        startDate: draft.startDate,
-        lastInteractionDate: draft.lastInteractionDate
+        startDate: draft.startDate
       });
       setDraft({
         targetContactId: otherContacts[0]?.id || "",
@@ -414,8 +422,7 @@ export function RelationshipSection({
         customRelationshipType: "",
         relationshipStrength: 50,
         notes: "",
-        startDate: "",
-        lastInteractionDate: ""
+        startDate: ""
       });
       setModalOpen(false);
       await onChanged();
@@ -522,14 +529,6 @@ export function RelationshipSection({
                       onChange={(event) => setDraft((current) => ({ ...current, startDate: event.target.value }))}
                     />
                   </label>
-                  <label>
-                    Last interaction
-                    <input
-                      type="date"
-                      value={draft.lastInteractionDate}
-                      onChange={(event) => setDraft((current) => ({ ...current, lastInteractionDate: event.target.value }))}
-                    />
-                  </label>
                   <label className="full-span">
                     Notes
                     <input
@@ -578,8 +577,7 @@ function RelationshipRow({
     customRelationshipType: relationship.customRelationshipType || "",
     relationshipStrength: relationship.relationshipStrength,
     notes: relationship.notes || "",
-    startDate: relationship.startDate || "",
-    lastInteractionDate: relationship.lastInteractionDate || ""
+    startDate: relationship.startDate || ""
   });
 
   const otherName = relationship.sourceContactId === contact.id ? relationship.targetName : relationship.sourceName;
@@ -643,14 +641,6 @@ function RelationshipRow({
         <label className="relationship-edit-field">
           <span>Start date</span>
           <input type="date" value={draft.startDate} onChange={(event) => setDraft((current) => ({ ...current, startDate: event.target.value }))} />
-        </label>
-        <label className="relationship-edit-field">
-          <span>Last interaction</span>
-          <input
-            type="date"
-            value={draft.lastInteractionDate}
-            onChange={(event) => setDraft((current) => ({ ...current, lastInteractionDate: event.target.value }))}
-          />
         </label>
         <label className="relationship-edit-field relationship-edit-notes">
           <span>Notes</span>

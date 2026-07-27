@@ -41,12 +41,17 @@ export interface Appearance {
 }
 
 export interface Preferences {
-  favoriteColor?: string;
+  favoriteColors?: string[];
   favoriteFoods?: string[];
   interests?: string[];
   likes?: string[];
   dislikes?: string[];
   other?: string;
+}
+
+export interface ImportantDate {
+  date: string;
+  description: string;
 }
 
 export interface Contact {
@@ -59,7 +64,7 @@ export interface Contact {
   relationshipStrength: number;
   lastInteractionDate?: string | null;
   selfRelationshipNotes?: string | null;
-  importantDates: string[];
+  importantDates: ImportantDate[];
   appearance: Appearance;
   traits: string[];
   preferences: Preferences;
@@ -91,13 +96,30 @@ export interface Relationship {
   updatedAt: string;
 }
 
+type ArchivedContact = Omit<Contact, "images" | "profileImage"> & { images: ArchiveImage[] };
+type LegacyPreferences = Omit<Preferences, "favoriteColors"> & { favoriteColor?: string };
+type LegacyArchivedContact = Omit<ArchivedContact, "importantDates" | "preferences"> & {
+  importantDates: string[];
+  preferences: LegacyPreferences;
+};
+
 export interface ContactsArchiveV1 {
   format: "rolodexian.contacts-export";
   version: 1;
   exportedAt: string;
-  contacts: Array<Omit<Contact, "images" | "profileImage"> & { images: ArchiveImage[] }>;
+  contacts: LegacyArchivedContact[];
   relationships: Relationship[];
 }
+
+export interface ContactsArchiveV2 {
+  format: "rolodexian.contacts-export";
+  version: 2;
+  exportedAt: string;
+  contacts: ArchivedContact[];
+  relationships: Relationship[];
+}
+
+export type ContactsArchive = ContactsArchiveV1 | ContactsArchiveV2;
 
 export interface ImportSummary {
   contacts: {
