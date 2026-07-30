@@ -17,11 +17,13 @@ const uploadDir = process.env.UPLOAD_DIR || path.join(dataDir, "uploads");
 const dbPath = process.env.DATABASE_PATH || path.join(dataDir, "rolodexian.sqlite");
 const port = Number(process.env.PORT || 4000);
 const isProduction = process.env.NODE_ENV === "production";
-const distDir = path.join(rootDir, "dist");
-const devWebUrl = process.env.DEV_WEB_URL || "http://localhost:5173";
+const steamDistDir = path.join(rootDir, "apps", "steam-client", "dist");
+const retroDistDir = path.join(rootDir, "apps", "retro-client", "dist");
+const devSteamWebUrl = process.env.DEV_STEAM_WEB_URL || process.env.DEV_WEB_URL || "http://localhost:5173";
+const devRetroWebUrl = process.env.DEV_RETRO_WEB_URL || "http://localhost:5174";
 const archiveFormat = "rolodexian.contacts-export";
-const archiveVersion = 2;
-const supportedArchiveVersions = new Set([1, 2]);
+const archiveVersion = 3;
+const supportedArchiveVersions = new Set([1, 2, 3]);
 
 fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -96,12 +98,42 @@ CREATE TABLE IF NOT EXISTS relationships (
   CHECK (source_contact_id <> target_contact_id)
 );
 
+CREATE TABLE IF NOT EXISTS contact_profiles (
+  contact_id TEXT PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
+  descriptor TEXT,
+  background_image_id TEXT REFERENCES images(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS profile_sections (
+  id TEXT PRIMARY KEY,
+  contact_id TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  position INTEGER NOT NULL,
+  content TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS profile_section_images (
+  id TEXT PRIMARY KEY,
+  section_id TEXT NOT NULL REFERENCES profile_sections(id) ON DELETE CASCADE,
+  image_id TEXT NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL,
+  caption TEXT,
+  UNIQUE(section_id, image_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);
 CREATE INDEX IF NOT EXISTS idx_social_contact ON social_accounts(contact_id);
 CREATE INDEX IF NOT EXISTS idx_interactions_contact ON interaction_events(contact_id);
 CREATE INDEX IF NOT EXISTS idx_images_contact ON images(contact_id);
 CREATE INDEX IF NOT EXISTS idx_relationship_source ON relationships(source_contact_id);
 CREATE INDEX IF NOT EXISTS idx_relationship_target ON relationships(target_contact_id);
+CREATE INDEX IF NOT EXISTS idx_profile_sections_contact ON profile_sections(contact_id, position);
+CREATE INDEX IF NOT EXISTS idx_profile_section_images_section ON profile_section_images(section_id, position);
 `);
 
 const storage = multer.diskStorage({
@@ -176,6 +208,40 @@ function badRequest(message) {
 function stringList(value) {
   if (!Array.isArray(value)) return [];
   return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+const profileSectionTypes = new Set([
+  "markdown",
+  "gallery",
+  "importantDates",
+  "preferences",
+  "socialAccounts",
+  "interactions"
+]);
+const singletonProfileSectionTypes = new Set([
+  "importantDates",
+  "preferences",
+  "socialAccounts",
+  "interactions"
+]);
+const defaultSectionTitles = {
+  markdown: "About",
+  gallery: "Gallery",
+  importantDates: "Important Dates",
+  preferences: "Preferences",
+  socialAccounts: "Social Accounts",
+  interactions: "Interaction History"
+};
+
+function normalizeProfileSectionType(value) {
+  const type = optionalText(value);
+  return type && profileSectionTypes.has(type) ? type : null;
+}
+
+function normalizeProfileContent(type, value) {
+  if (type !== "markdown") return {};
+  const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return { markdown: String(raw.markdown || "") };
 }
 
 function normalizeContactInput(body) {
@@ -255,9 +321,21 @@ async function archiveImage(image) {
 }
 
 async function archiveContact(contact) {
-  const { profileImage: _profileImage, images, ...metadata } = contact;
+  const { profileImage: _profileImage, images, profile, ...metadata } = contact;
+  const archivedProfile = profile ? {
+    contactId: profile.contactId,
+    descriptor: profile.descriptor,
+    backgroundImageId: profile.backgroundImageId,
+    createdAt: profile.createdAt,
+    updatedAt: profile.updatedAt,
+    sections: profile.sections.map((section) => ({
+      ...section,
+      galleryItems: section.galleryItems.map(({ image: _image, ...item }) => item)
+    }))
+  } : null;
   return {
     ...metadata,
+    profile: archivedProfile,
     images: await Promise.all(images.map(archiveImage))
   };
 }
@@ -286,7 +364,7 @@ function normalizeArchiveImage(rawImage, contactId, fieldName) {
     originalName: optionalText(rawImage.originalName),
     mimeType,
     size: Number.isFinite(Number(rawImage.size)) ? Math.max(0, Math.round(Number(rawImage.size))) : decoded.buffer.length,
-    kind: rawImage.kind === "profile" ? "profile" : "additional",
+    kind: rawImage.kind === "profile" || rawImage.kind === "background" ? rawImage.kind : "additional",
     notes: optionalText(rawImage.notes),
     createdAt: optionalText(rawImage.createdAt),
     buffer: decoded.buffer
@@ -294,6 +372,69 @@ function normalizeArchiveImage(rawImage, contactId, fieldName) {
   return {
     ...image,
     filename: `${Date.now()}-${randomUUID()}${safeImageExtension(image)}`
+  };
+}
+
+function normalizeArchiveProfile(rawProfile, contactId, images, fieldName) {
+  if (rawProfile === null || rawProfile === undefined) return null;
+  if (!plainObject(rawProfile)) throw badRequest(`${fieldName} must be an object.`);
+  const imageIds = new Set(images.map((image) => image.id));
+  const backgroundImageId = optionalText(rawProfile.backgroundImageId);
+  if (backgroundImageId && !imageIds.has(backgroundImageId)) {
+    throw badRequest(`${fieldName}.backgroundImageId must reference an image in the same contact.`);
+  }
+  const descriptor = optionalText(rawProfile.descriptor);
+  if (descriptor && descriptor.length > 160) throw badRequest(`${fieldName}.descriptor must be 160 characters or fewer.`);
+  if (!Array.isArray(rawProfile.sections)) throw badRequest(`${fieldName}.sections must be an array.`);
+  const sectionIds = new Set();
+  const singletonTypes = new Set();
+  const sections = rawProfile.sections.map((rawSection, sectionIndex) => {
+    const sectionField = `${fieldName}.sections[${sectionIndex}]`;
+    if (!plainObject(rawSection)) throw badRequest(`${sectionField} must be an object.`);
+    const id = requiredText(rawSection.id, `${sectionField}.id`);
+    if (sectionIds.has(id)) throw badRequest(`Duplicate profile section id: ${id}.`);
+    sectionIds.add(id);
+    const type = normalizeProfileSectionType(rawSection.type);
+    if (!type) throw badRequest(`${sectionField}.type is unsupported.`);
+    if (singletonProfileSectionTypes.has(type) && singletonTypes.has(type)) {
+      throw badRequest(`${fieldName} contains more than one ${type} section.`);
+    }
+    if (singletonProfileSectionTypes.has(type)) singletonTypes.add(type);
+    const galleryItemIds = new Set();
+    const galleryImageIds = new Set();
+    const galleryItems = type === "gallery"
+      ? (Array.isArray(rawSection.galleryItems) ? rawSection.galleryItems : []).map((rawItem, itemIndex) => {
+          const itemField = `${sectionField}.galleryItems[${itemIndex}]`;
+          if (!plainObject(rawItem)) throw badRequest(`${itemField} must be an object.`);
+          const itemId = requiredText(rawItem.id, `${itemField}.id`);
+          const imageId = requiredText(rawItem.imageId, `${itemField}.imageId`);
+          if (galleryItemIds.has(itemId)) throw badRequest(`Duplicate gallery item id: ${itemId}.`);
+          if (galleryImageIds.has(imageId)) throw badRequest(`${sectionField} references image ${imageId} more than once.`);
+          if (!imageIds.has(imageId)) throw badRequest(`${itemField}.imageId must reference an image in the same contact.`);
+          galleryItemIds.add(itemId);
+          galleryImageIds.add(imageId);
+          return { id: itemId, sectionId: id, imageId, position: itemIndex, caption: optionalText(rawItem.caption) };
+        })
+      : [];
+    return {
+      id,
+      contactId,
+      type,
+      title: optionalText(rawSection.title) || defaultSectionTitles[type],
+      position: sectionIndex,
+      content: normalizeProfileContent(type, rawSection.content),
+      galleryItems,
+      createdAt: optionalText(rawSection.createdAt),
+      updatedAt: optionalText(rawSection.updatedAt)
+    };
+  });
+  return {
+    contactId,
+    descriptor,
+    backgroundImageId,
+    sections,
+    createdAt: optionalText(rawProfile.createdAt),
+    updatedAt: optionalText(rawProfile.updatedAt)
   };
 }
 
@@ -311,6 +452,7 @@ function normalizeArchiveContact(rawContact, index) {
   if (profileImageId && !imageIds.has(profileImageId)) {
     throw badRequest(`${fieldName}.profileImageId must reference an image in the same contact.`);
   }
+  const profile = normalizeArchiveProfile(rawContact.profile, id, images, `${fieldName}.profile`);
   return {
     ...input,
     id,
@@ -318,7 +460,8 @@ function normalizeArchiveContact(rawContact, index) {
     profileImageId,
     images,
     createdAt: optionalText(rawContact.createdAt),
-    updatedAt: optionalText(rawContact.updatedAt)
+    updatedAt: optionalText(rawContact.updatedAt),
+    profile
   };
 }
 
@@ -427,6 +570,119 @@ const contactSelect = db.prepare("SELECT * FROM contacts WHERE id = ?");
 const socialSelect = db.prepare("SELECT * FROM social_accounts WHERE contact_id = ? ORDER BY platform COLLATE NOCASE, username COLLATE NOCASE");
 const interactionSelect = db.prepare("SELECT * FROM interaction_events WHERE contact_id = ? ORDER BY COALESCE(occurred_on, '') DESC, title COLLATE NOCASE");
 const imageSelect = db.prepare("SELECT * FROM images WHERE contact_id = ? ORDER BY kind DESC, created_at DESC");
+const profileSelect = db.prepare("SELECT * FROM contact_profiles WHERE contact_id = ?");
+const profileSectionsSelect = db.prepare("SELECT * FROM profile_sections WHERE contact_id = ? ORDER BY position, created_at");
+const galleryItemsSelect = db.prepare(`
+  SELECT profile_section_images.*, images.contact_id, images.filename, images.original_name,
+    images.mime_type, images.size, images.kind, images.notes, images.created_at
+  FROM profile_section_images
+  JOIN images ON images.id = profile_section_images.image_id
+  WHERE profile_section_images.section_id = ?
+  ORDER BY profile_section_images.position, profile_section_images.id
+`);
+
+function preferencesHaveData(preferences) {
+  return Object.values(preferences || {}).some((value) =>
+    Array.isArray(value) ? value.length > 0 : Boolean(optionalText(value))
+  );
+}
+
+function initialProfileSections(contact) {
+  const sections = [];
+  const markdownParts = [contact.summary, contact.selfRelationshipNotes]
+    .map(optionalText)
+    .filter(Boolean);
+  if (contact.traits?.length) markdownParts.push(`**Traits:** ${contact.traits.join(", ")}`);
+  if (markdownParts.length) {
+    sections.push({ type: "markdown", title: "About", content: { markdown: markdownParts.join("\n\n") } });
+  }
+  if (contact.images.some((image) => image.kind === "additional")) {
+    sections.push({ type: "gallery", title: "Gallery", content: {} });
+  }
+  if (contact.importantDates.length) sections.push({ type: "importantDates", title: "Important Dates", content: {} });
+  if (preferencesHaveData(contact.preferences)) sections.push({ type: "preferences", title: "Preferences", content: {} });
+  if (contact.socialAccounts.length) sections.push({ type: "socialAccounts", title: "Social Accounts", content: {} });
+  if (contact.interactions.length) sections.push({ type: "interactions", title: "Interaction History", content: {} });
+  return sections;
+}
+
+function ensureContactProfile(contact) {
+  if (profileSelect.get(contact.id)) return;
+  const timestamp = nowIso();
+  db.transaction(() => {
+    db.prepare(`
+      INSERT OR IGNORE INTO contact_profiles (contact_id, descriptor, background_image_id, created_at, updated_at)
+      VALUES (?, NULL, NULL, ?, ?)
+    `).run(contact.id, timestamp, timestamp);
+    const sections = initialProfileSections(contact);
+    for (const [position, section] of sections.entries()) {
+      const sectionId = randomUUID();
+      db.prepare(`
+        INSERT INTO profile_sections (id, contact_id, type, title, position, content, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(sectionId, contact.id, section.type, section.title, position, jsonString(section.content, {}), timestamp, timestamp);
+      if (section.type === "gallery") {
+        contact.images
+          .filter((image) => image.kind === "additional")
+          .forEach((image, imagePosition) => {
+            db.prepare(`
+              INSERT INTO profile_section_images (id, section_id, image_id, position, caption)
+              VALUES (?, ?, ?, ?, ?)
+            `).run(randomUUID(), sectionId, image.id, imagePosition, image.notes || null);
+          });
+      }
+    }
+  })();
+}
+
+function mapGalleryItem(row) {
+  return {
+    id: row.id,
+    sectionId: row.section_id,
+    imageId: row.image_id,
+    position: row.position,
+    caption: row.caption,
+    image: mapImage({
+      id: row.image_id,
+      contact_id: row.contact_id,
+      filename: row.filename,
+      original_name: row.original_name,
+      mime_type: row.mime_type,
+      size: row.size,
+      kind: row.kind,
+      notes: row.notes,
+      created_at: row.created_at
+    })
+  };
+}
+
+function mapProfileSection(row) {
+  return {
+    id: row.id,
+    contactId: row.contact_id,
+    type: row.type,
+    title: row.title,
+    position: row.position,
+    content: parseJson(row.content, {}),
+    galleryItems: row.type === "gallery" ? galleryItemsSelect.all(row.id).map(mapGalleryItem) : [],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function getContactProfile(contactId, images) {
+  const row = profileSelect.get(contactId);
+  if (!row) return null;
+  return {
+    contactId,
+    descriptor: row.descriptor,
+    backgroundImageId: row.background_image_id,
+    backgroundImage: images.find((image) => image.id === row.background_image_id) || null,
+    sections: profileSectionsSelect.all(contactId).map(mapProfileSection),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
 
 function getFullContact(id) {
   const row = contactSelect.get(id);
@@ -450,6 +706,8 @@ function getFullContact(id) {
   contact.lastInteractionDate = latestInteractionDate(contact.interactions, contact.lastInteractionDate);
   contact.images = imageSelect.all(id).map(mapImage);
   contact.profileImage = contact.images.find((image) => image.id === contact.profileImageId) || null;
+  ensureContactProfile(contact);
+  contact.profile = getContactProfile(id, contact.images);
   return contact;
 }
 
@@ -669,6 +927,62 @@ function importedContactParams(contact, timestamp) {
   };
 }
 
+function replaceImportedProfile(contact, timestamp) {
+  db.prepare("DELETE FROM profile_sections WHERE contact_id = ?").run(contact.id);
+  db.prepare("DELETE FROM contact_profiles WHERE contact_id = ?").run(contact.id);
+  const profile = plainObject(contact.profile) ? contact.profile : null;
+  if (!profile) return;
+
+  const imageIds = new Set(contact.images.map((image) => image.id));
+  const backgroundImageId = optionalText(profile.backgroundImageId);
+  db.prepare(`
+    INSERT INTO contact_profiles (contact_id, descriptor, background_image_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    contact.id,
+    optionalText(profile.descriptor),
+    backgroundImageId && imageIds.has(backgroundImageId) ? backgroundImageId : null,
+    optionalText(profile.createdAt) || timestamp,
+    optionalText(profile.updatedAt) || timestamp
+  );
+
+  const sections = Array.isArray(profile.sections) ? profile.sections : [];
+  const seenSingletons = new Set();
+  sections.forEach((rawSection, position) => {
+    if (!plainObject(rawSection)) return;
+    const type = normalizeProfileSectionType(rawSection.type);
+    if (!type || (singletonProfileSectionTypes.has(type) && seenSingletons.has(type))) return;
+    if (singletonProfileSectionTypes.has(type)) seenSingletons.add(type);
+    const sectionId = optionalText(rawSection.id) || randomUUID();
+    const createdAt = optionalText(rawSection.createdAt) || timestamp;
+    const updatedAt = optionalText(rawSection.updatedAt) || timestamp;
+    db.prepare(`
+      INSERT INTO profile_sections (id, contact_id, type, title, position, content, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      sectionId,
+      contact.id,
+      type,
+      optionalText(rawSection.title) || defaultSectionTitles[type],
+      position,
+      jsonString(normalizeProfileContent(type, rawSection.content), {}),
+      createdAt,
+      updatedAt
+    );
+    if (type !== "gallery") return;
+    const items = Array.isArray(rawSection.galleryItems) ? rawSection.galleryItems : [];
+    items.forEach((rawItem, itemPosition) => {
+      if (!plainObject(rawItem)) return;
+      const imageId = optionalText(rawItem.imageId);
+      if (!imageId || !imageIds.has(imageId)) return;
+      db.prepare(`
+        INSERT OR IGNORE INTO profile_section_images (id, section_id, image_id, position, caption)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(optionalText(rawItem.id) || randomUUID(), sectionId, imageId, itemPosition, optionalText(rawItem.caption));
+    });
+  });
+}
+
 function importArchiveTx(archive) {
   return db.transaction((archivePayload) => {
     const timestamp = nowIso();
@@ -720,6 +1034,7 @@ function importArchiveTx(archive) {
           summary.images.created += 1;
         }
       }
+      replaceImportedProfile(contact, timestamp);
     }
 
     for (const relationship of archivePayload.relationships) {
@@ -940,7 +1255,9 @@ app.get("/api/contacts", (req, res) => {
         JSON.stringify(contact.traits),
         JSON.stringify(contact.preferences),
         JSON.stringify(contact.customFields),
-        JSON.stringify(contact.socialAccounts)
+        JSON.stringify(contact.socialAccounts),
+        contact.profile?.descriptor,
+        JSON.stringify(contact.profile?.sections?.filter((section) => section.type === "markdown").map((section) => section.content))
       ].join(" ").toLowerCase();
       return searchable.includes(search);
     });
@@ -1030,6 +1347,202 @@ app.delete("/api/images/:id", async (req, res) => {
   db.prepare("DELETE FROM images WHERE id = ?").run(req.params.id);
   await fsp.unlink(path.join(uploadDir, image.filename)).catch(() => {});
   res.status(204).end();
+});
+
+function getProfileSection(id) {
+  const row = db.prepare("SELECT * FROM profile_sections WHERE id = ?").get(id);
+  return row ? mapProfileSection(row) : null;
+}
+
+function getGalleryItem(id) {
+  const row = db.prepare(`
+    SELECT profile_section_images.*, images.contact_id, images.filename, images.original_name,
+      images.mime_type, images.size, images.kind, images.notes, images.created_at
+    FROM profile_section_images
+    JOIN images ON images.id = profile_section_images.image_id
+    WHERE profile_section_images.id = ?
+  `).get(id);
+  return row ? mapGalleryItem(row) : null;
+}
+
+app.patch("/api/contacts/:id/profile", (req, res) => {
+  const contact = getFullContact(req.params.id);
+  if (!contact) return res.status(404).json({ error: "Contact not found." });
+  const descriptor = optionalText(req.body.descriptor);
+  if (descriptor && descriptor.length > 160) {
+    return res.status(400).json({ error: "Profile descriptor must be 160 characters or fewer." });
+  }
+  db.prepare("UPDATE contact_profiles SET descriptor = ?, updated_at = ? WHERE contact_id = ?")
+    .run(descriptor, nowIso(), req.params.id);
+  res.json({ contact: getFullContact(req.params.id) });
+});
+
+app.post("/api/contacts/:id/profile/background", upload.single("image"), async (req, res, next) => {
+  let previousFilename = null;
+  try {
+    const contact = getFullContact(req.params.id);
+    if (!contact) {
+      if (req.file) await fsp.unlink(req.file.path).catch(() => {});
+      return res.status(404).json({ error: "Contact not found." });
+    }
+    if (!req.file) return res.status(400).json({ error: "Background image is required." });
+    const previous = contact.profile?.backgroundImage;
+    previousFilename = previous?.filename || null;
+    const id = randomUUID();
+    const timestamp = nowIso();
+    db.transaction(() => {
+      db.prepare(`
+        INSERT INTO images (id, contact_id, filename, original_name, mime_type, size, kind, notes, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'background', NULL, ?)
+      `).run(id, req.params.id, req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, timestamp);
+      db.prepare("UPDATE contact_profiles SET background_image_id = ?, updated_at = ? WHERE contact_id = ?")
+        .run(id, timestamp, req.params.id);
+      if (previous?.id) db.prepare("DELETE FROM images WHERE id = ?").run(previous.id);
+    })();
+    if (previousFilename) await fsp.unlink(path.join(uploadDir, previousFilename)).catch(() => {});
+    res.status(201).json({ contact: getFullContact(req.params.id) });
+  } catch (error) {
+    if (req.file) await fsp.unlink(req.file.path).catch(() => {});
+    next(error);
+  }
+});
+
+app.delete("/api/contacts/:id/profile/background", async (req, res) => {
+  const contact = getFullContact(req.params.id);
+  if (!contact) return res.status(404).json({ error: "Contact not found." });
+  const background = contact.profile?.backgroundImage;
+  if (background) {
+    db.prepare("DELETE FROM images WHERE id = ?").run(background.id);
+    await fsp.unlink(path.join(uploadDir, background.filename)).catch(() => {});
+  }
+  res.json({ contact: getFullContact(req.params.id) });
+});
+
+app.post("/api/contacts/:id/profile/sections", (req, res) => {
+  const contact = getFullContact(req.params.id);
+  if (!contact) return res.status(404).json({ error: "Contact not found." });
+  const type = normalizeProfileSectionType(req.body.type);
+  if (!type) return res.status(400).json({ error: "Unsupported profile section type." });
+  if (singletonProfileSectionTypes.has(type)) {
+    const existing = db.prepare("SELECT id FROM profile_sections WHERE contact_id = ? AND type = ?").get(req.params.id, type);
+    if (existing) return res.status(409).json({ error: "That profile section is already visible." });
+  }
+  const position = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS position FROM profile_sections WHERE contact_id = ?")
+    .get(req.params.id).position;
+  const id = randomUUID();
+  const timestamp = nowIso();
+  db.prepare(`
+    INSERT INTO profile_sections (id, contact_id, type, title, position, content, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    req.params.id,
+    type,
+    optionalText(req.body.title) || defaultSectionTitles[type],
+    position,
+    jsonString(normalizeProfileContent(type, req.body.content), {}),
+    timestamp,
+    timestamp
+  );
+  res.status(201).json({ section: getProfileSection(id) });
+});
+
+app.patch("/api/profile-sections/:id", (req, res) => {
+  const section = getProfileSection(req.params.id);
+  if (!section) return res.status(404).json({ error: "Profile section not found." });
+  const title = Object.hasOwn(req.body, "title") ? optionalText(req.body.title) : section.title;
+  const content = Object.hasOwn(req.body, "content")
+    ? normalizeProfileContent(section.type, req.body.content)
+    : section.content;
+  db.prepare("UPDATE profile_sections SET title = ?, content = ?, updated_at = ? WHERE id = ?")
+    .run(title || defaultSectionTitles[section.type], jsonString(content, {}), nowIso(), req.params.id);
+  res.json({ section: getProfileSection(req.params.id) });
+});
+
+app.delete("/api/profile-sections/:id", (req, res) => {
+  const result = db.prepare("DELETE FROM profile_sections WHERE id = ?").run(req.params.id);
+  if (!result.changes) return res.status(404).json({ error: "Profile section not found." });
+  res.status(204).end();
+});
+
+app.put("/api/contacts/:id/profile/sections/order", (req, res) => {
+  const rows = profileSectionsSelect.all(req.params.id);
+  if (!profileSelect.get(req.params.id)) return res.status(404).json({ error: "Contact profile not found." });
+  const sectionIds = Array.isArray(req.body.sectionIds) ? req.body.sectionIds.map(String) : [];
+  const expected = new Set(rows.map((row) => row.id));
+  if (sectionIds.length !== rows.length || new Set(sectionIds).size !== rows.length || sectionIds.some((id) => !expected.has(id))) {
+    return res.status(400).json({ error: "Section order must contain every profile section exactly once." });
+  }
+  const timestamp = nowIso();
+  db.transaction(() => {
+    const update = db.prepare("UPDATE profile_sections SET position = ?, updated_at = ? WHERE id = ? AND contact_id = ?");
+    sectionIds.forEach((id, position) => update.run(position, timestamp, id, req.params.id));
+  })();
+  res.json({ sections: profileSectionsSelect.all(req.params.id).map(mapProfileSection) });
+});
+
+app.post("/api/profile-sections/:id/images", upload.array("images", 20), async (req, res, next) => {
+  const files = req.files || [];
+  try {
+    const section = getProfileSection(req.params.id);
+    if (!section) throw Object.assign(new Error("Profile section not found."), { status: 404 });
+    if (section.type !== "gallery") throw badRequest("Images can only be added to gallery sections.");
+    if (!files.length) throw badRequest("At least one gallery image is required.");
+    const startPosition = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS position FROM profile_section_images WHERE section_id = ?")
+      .get(req.params.id).position;
+    const timestamp = nowIso();
+    const itemIds = [];
+    db.transaction(() => {
+      files.forEach((file, index) => {
+        const imageId = randomUUID();
+        const itemId = randomUUID();
+        db.prepare(`
+          INSERT INTO images (id, contact_id, filename, original_name, mime_type, size, kind, notes, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'additional', NULL, ?)
+        `).run(imageId, section.contactId, file.filename, file.originalname, file.mimetype, file.size, timestamp);
+        db.prepare(`
+          INSERT INTO profile_section_images (id, section_id, image_id, position, caption)
+          VALUES (?, ?, ?, ?, NULL)
+        `).run(itemId, req.params.id, imageId, startPosition + index);
+        itemIds.push(itemId);
+      });
+    })();
+    res.status(201).json({ items: itemIds.map(getGalleryItem) });
+  } catch (error) {
+    await Promise.allSettled(files.map((file) => fsp.unlink(file.path)));
+    next(error);
+  }
+});
+
+app.patch("/api/profile-section-images/:id", (req, res) => {
+  const item = getGalleryItem(req.params.id);
+  if (!item) return res.status(404).json({ error: "Gallery item not found." });
+  const caption = Object.hasOwn(req.body, "caption") ? optionalText(req.body.caption) : item.caption;
+  db.prepare("UPDATE profile_section_images SET caption = ? WHERE id = ?").run(caption, req.params.id);
+  res.json({ item: getGalleryItem(req.params.id) });
+});
+
+app.delete("/api/profile-section-images/:id", (req, res) => {
+  const result = db.prepare("DELETE FROM profile_section_images WHERE id = ?").run(req.params.id);
+  if (!result.changes) return res.status(404).json({ error: "Gallery item not found." });
+  res.status(204).end();
+});
+
+app.put("/api/profile-sections/:id/images/order", (req, res) => {
+  const section = getProfileSection(req.params.id);
+  if (!section) return res.status(404).json({ error: "Profile section not found." });
+  if (section.type !== "gallery") return res.status(400).json({ error: "Only gallery items can be reordered." });
+  const rows = galleryItemsSelect.all(req.params.id);
+  const itemIds = Array.isArray(req.body.itemIds) ? req.body.itemIds.map(String) : [];
+  const expected = new Set(rows.map((row) => row.id));
+  if (itemIds.length !== rows.length || new Set(itemIds).size !== rows.length || itemIds.some((id) => !expected.has(id))) {
+    return res.status(400).json({ error: "Gallery order must contain every item exactly once." });
+  }
+  db.transaction(() => {
+    const update = db.prepare("UPDATE profile_section_images SET position = ? WHERE id = ? AND section_id = ?");
+    itemIds.forEach((id, position) => update.run(position, id, req.params.id));
+  })();
+  res.json({ items: galleryItemsSelect.all(req.params.id).map(mapGalleryItem) });
 });
 
 app.get("/api/relationships", (_req, res) => {
@@ -1142,14 +1655,23 @@ app.get("/api/graph", (_req, res) => {
   res.json({ nodes, edges });
 });
 
-if (isProduction && fs.existsSync(distDir)) {
-  app.use(express.static(distDir));
+if (isProduction && fs.existsSync(steamDistDir)) {
+  if (fs.existsSync(retroDistDir)) {
+    app.use("/retro", express.static(retroDistDir));
+    app.get("/retro/*", (_req, res) => {
+      res.sendFile(path.join(retroDistDir, "index.html"));
+    });
+  }
+  app.use(express.static(steamDistDir));
   app.get("*", (_req, res) => {
-    res.sendFile(path.join(distDir, "index.html"));
+    res.sendFile(path.join(steamDistDir, "index.html"));
   });
 } else if (!isProduction) {
+  app.get(/^\/retro(?:\/|$).*/, (req, res) => {
+    res.redirect(307, new URL(req.originalUrl, devRetroWebUrl).toString());
+  });
   app.get(/^\/(?!api(?:\/|$)|uploads(?:\/|$)).*/, (req, res) => {
-    res.redirect(307, new URL(req.originalUrl, devWebUrl).toString());
+    res.redirect(307, new URL(req.originalUrl, devSteamWebUrl).toString());
   });
 }
 
@@ -1164,13 +1686,14 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: "Unexpected server error." });
 });
 
-if (isProduction && !fs.existsSync(distDir)) {
-  console.warn("Frontend build not found. Run `npm run build` before `npm start`.");
+if (isProduction && !fs.existsSync(steamDistDir)) {
+  console.warn("Steam client build not found. Run `npm run build` before `npm start`.");
 }
 
 app.listen(port, () => {
   console.log(`Rolodexian server listening on http://localhost:${port}`);
   if (!isProduction) {
-    console.log(`Frontend development server: ${devWebUrl}`);
+    console.log(`Steam client development server: ${devSteamWebUrl}`);
+    console.log(`Retro client development server: ${devRetroWebUrl}/retro/`);
   }
 });

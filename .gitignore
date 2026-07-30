@@ -48,3 +48,4 @@ temp/
 .cache/
 .playwright-cli/
 output/playwright/
+.tmp-codex-verification/

@@ -4,6 +4,9 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
+COPY apps/steam-client/package.json ./apps/steam-client/
+COPY apps/retro-client/package.json ./apps/retro-client/
+COPY packages/shared/package.json ./packages/shared/
 RUN npm ci
 
 FROM deps AS build
@@ -17,6 +20,9 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
+COPY apps/steam-client/package.json ./apps/steam-client/
+COPY apps/retro-client/package.json ./apps/retro-client/
+COPY packages/shared/package.json ./packages/shared/
 RUN npm ci --omit=dev && npm cache clean --force
 
 FROM node:22-bookworm-slim AS runner
@@ -27,7 +33,8 @@ ENV DATA_DIR=/app/data
 ENV UPLOAD_DIR=/app/data/uploads
 ENV DATABASE_PATH=/app/data/rolodexian.sqlite
 COPY --from=prod-deps /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
+COPY --from=build /app/apps/steam-client/dist ./apps/steam-client/dist
+COPY --from=build /app/apps/retro-client/dist ./apps/retro-client/dist
 COPY server ./server
 COPY package*.json ./
 RUN mkdir -p /app/data/uploads
